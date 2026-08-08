@@ -3,6 +3,7 @@
 #include "engine/core/types.hpp"
 #include "engine/math/glm.hpp"
 #include "engine/platform/window.hpp"
+#include "engine/render/grid.hpp"
 #include "engine/vulkan/device.hpp"
 
 #include <vulkan/vulkan.h>
@@ -38,6 +39,13 @@ struct RendererState {
     VkBuffer         vertex_buffer   = VK_NULL_HANDLE;
     VkDeviceMemory   vertex_memory   = VK_NULL_HANDLE;
 
+    /// Ground grid: LINE_LIST pipeline + pre-baked VB (uploaded once at level load).
+    VkPipeline       grid_pipeline      = VK_NULL_HANDLE;
+    VkBuffer         grid_vertex_buffer = VK_NULL_HANDLE;
+    VkDeviceMemory   grid_vertex_memory = VK_NULL_HANDLE;
+    u32              grid_vertex_count  = 0;
+    bool             grid_visible       = false;
+
     VkSemaphore      image_available[kMaxFramesInFlight]{};
     VkSemaphore      render_finished[kMaxFramesInFlight]{};
     VkFence          in_flight_fences[kMaxFramesInFlight]{};
@@ -47,7 +55,8 @@ struct RendererState {
 [[nodiscard]] bool renderer_create(
     RendererState& state,
     const DeviceState& device,
-    const platform::Window& window);
+    const platform::Window& window,
+    const render::GroundGridDesc& grid = {});
 
 void renderer_destroy(RendererState& state, const DeviceState& device);
 
