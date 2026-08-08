@@ -1,6 +1,7 @@
 #include "engine/vulkan/renderer.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -206,28 +207,25 @@ bool create_image_views_and_framebuffers(RendererState& state, VkDevice device)
     return UINT32_MAX;
 }
 
-[[nodiscard]] bool create_vertex_buffer(RendererState& state, const DeviceState& device)
+[[nodiscard]] bool create_host_vertex_buffer(
+    const DeviceState& device,
+    const void* data,
+    VkDeviceSize buffer_size,
+    VkBuffer* out_buffer,
+    VkDeviceMemory* out_memory)
 {
-    // Colored triangle near the origin (XY plane, Z=0). CCW from +Z for back-face cull.
-    const TriangleVertex vertices[3] = {
-        {{ 0.0f, -0.5f, 0.0f}, {1.0f, 0.2f, 0.2f}},
-        {{-0.5f,  0.5f, 0.0f}, {0.2f, 0.2f, 1.0f}},
-        {{ 0.5f,  0.5f, 0.0f}, {0.2f, 1.0f, 0.2f}},
-    };
-    const VkDeviceSize buffer_size = sizeof(vertices);
-
     VkBufferCreateInfo buffer_info{};
     buffer_info.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     buffer_info.size        = buffer_size;
     buffer_info.usage       = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
     buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-    if (vkCreateBuffer(device.device, &buffer_info, nullptr, &state.vertex_buffer) != VK_SUCCESS) {
+    if (vkCreateBuffer(device.device, &buffer_info, nullptr, out_buffer) != VK_SUCCESS) {
         return false;
     }
 
     VkMemoryRequirements mem_reqs{};
-    vkGetBufferMemoryRequirements(device.device, state.vertex_buffer, &mem_reqs);
+    vkGetBufferMemoryRequirements(device.device, *out_buffer, &mem_reqs);
 
     const u32 memory_type = find_memory_type(
         device.physical_device,
@@ -242,25 +240,72 @@ bool create_image_views_and_framebuffers(RendererState& state, VkDevice device)
     alloc_info.allocationSize  = mem_reqs.size;
     alloc_info.memoryTypeIndex = memory_type;
 
-    if (vkAllocateMemory(device.device, &alloc_info, nullptr, &state.vertex_memory) != VK_SUCCESS) {
+    if (vkAllocateMemory(device.device, &alloc_info, nullptr, out_memory) != VK_SUCCESS) {
         return false;
     }
 
-    if (vkBindBufferMemory(device.device, state.vertex_buffer, state.vertex_memory, 0) != VK_SUCCESS) {
+    if (vkBindBufferMemory(device.device, *out_buffer, *out_memory, 0) != VK_SUCCESS) {
         return false;
     }
 
     void* mapped = nullptr;
-    if (vkMapMemory(device.device, state.vertex_memory, 0, buffer_size, 0, &mapped) != VK_SUCCESS) {
+    if (vkMapMemory(device.device, *out_memory, 0, buffer_size, 0, &mapped) != VK_SUCCESS) {
         return false;
     }
-    std::memcpy(mapped, vertices, static_cast<std::size_t>(buffer_size));
-    vkUnmapMemory(device.device, state.vertex_memory);
+    std::memcpy(mapped, data, static_cast<std::size_t>(buffer_size));
+    vkUnmapMemory(device.device, *out_memory);
     return true;
 }
 
-[[nodiscard]] bool create_graphics_pipeline(RendererState& state, VkDevice device)
+[[nodiscard]] bool create_vertex_buffer(RendererState& state, const DeviceState& device)
 {
+    // Colored triangle near the origin (XY plane, Z=0). CCW from +Z for back-face cull.
+    const TriangleVertex vertices[3] = {
+        {{ 0.0f, -0.5f, 0.0f}, {1.0f, 0.2f, 0.2f}},
+        {{-0.5f,  0.5f, 0.0f}, {0.2f, 0.2f, 1.0f}},
+        {{ 0.5f,  0.5f, 0.0f}, {0.2f, 1.0f, 0.2f}},
+    };
+    return create_host_vertex_buffer(
+        device, vertices, sizeof(vertices), &state.vertex_buffer, &state.vertex_memory);
+}
+
+[[nodiscard]] bool create_grid_vertex_buffer(
+    RendererState& state,
+    const DeviceState& device,
+    const render::GroundGridDesc& grid)
+{
+    state.grid_vertex_count = 0;
+    state.grid_visible = grid.visible;
+
+    if (!grid.visible) {
+        return true;
+    }
+
+    // Stack-fixed bake — no heap in level load path beyond Vulkan allocations.
+    std::array<render::GridVertex, render::kMaxGridVertices> verts{};
+    u32 count = 0;
+    if (!render::grid_bake_vertices(grid, verts.data(), render::kMaxGridVertices, count)) {
+        std::fprintf(stderr, "[vulkan] Grid bake exceeded kMaxGridVertices (%u).\n",
+            render::kMaxGridVertices);
+        return false;
+    }
+    if (count == 0) {
+        state.grid_visible = false;
+        return true;
+    }
+
+    const VkDeviceSize buffer_size = sizeof(render::GridVertex) * count;
+    if (!create_host_vertex_buffer(
+            device, verts.data(), buffer_size, &state.grid_vertex_buffer, &state.grid_vertex_memory)) {
+        return false;
+    }
+    state.grid_vertex_count = count;
+    return true;
+}
+
+[[nodiscard]] bool create_graphics_pipelines(RendererState& state, VkDevice device)
+{
+    // Shared colored-mesh shaders: triangle list + ground grid line list.
     const std::string vert_path = std::string(CSC_SHADER_DIR) + "/triangle.vert.spv";
     const std::string frag_path = std::string(CSC_SHADER_DIR) + "/triangle.frag.spv";
 
@@ -294,6 +339,10 @@ bool create_image_views_and_framebuffers(RendererState& state, VkDevice device)
     stages[1].module = frag_module;
     stages[1].pName  = "main";
 
+    static_assert(sizeof(TriangleVertex) == sizeof(render::GridVertex));
+    static_assert(offsetof(TriangleVertex, pos) == offsetof(render::GridVertex, pos));
+    static_assert(offsetof(TriangleVertex, color) == offsetof(render::GridVertex, color));
+
     VkVertexInputBindingDescription binding{};
     binding.binding   = 0;
     binding.stride    = sizeof(TriangleVertex);
@@ -316,9 +365,13 @@ bool create_image_views_and_framebuffers(RendererState& state, VkDevice device)
     vertex_input.vertexAttributeDescriptionCount = 2;
     vertex_input.pVertexAttributeDescriptions    = attrs;
 
-    VkPipelineInputAssemblyStateCreateInfo input_assembly{};
-    input_assembly.sType    = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-    input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    VkPipelineInputAssemblyStateCreateInfo triangle_assembly{};
+    triangle_assembly.sType    = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    triangle_assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+    VkPipelineInputAssemblyStateCreateInfo line_assembly{};
+    line_assembly.sType    = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    line_assembly.topology = VK_PRIMITIVE_TOPOLOGY_LINE_LIST;
 
     VkPipelineViewportStateCreateInfo viewport_state{};
     viewport_state.sType         = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
@@ -375,7 +428,7 @@ bool create_image_views_and_framebuffers(RendererState& state, VkDevice device)
     pipeline_info.stageCount          = 2;
     pipeline_info.pStages             = stages;
     pipeline_info.pVertexInputState   = &vertex_input;
-    pipeline_info.pInputAssemblyState = &input_assembly;
+    pipeline_info.pInputAssemblyState = &triangle_assembly;
     pipeline_info.pViewportState      = &viewport_state;
     pipeline_info.pRasterizationState = &raster;
     pipeline_info.pMultisampleState   = &multisample;
@@ -385,13 +438,22 @@ bool create_image_views_and_framebuffers(RendererState& state, VkDevice device)
     pipeline_info.renderPass          = state.render_pass;
     pipeline_info.subpass             = 0;
 
-    const VkResult pipeline_result = vkCreateGraphicsPipelines(
+    const VkResult triangle_result = vkCreateGraphicsPipelines(
         device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &state.pipeline);
+    if (triangle_result != VK_SUCCESS) {
+        vkDestroyShaderModule(device, vert_module, nullptr);
+        vkDestroyShaderModule(device, frag_module, nullptr);
+        return false;
+    }
+
+    pipeline_info.pInputAssemblyState = &line_assembly;
+    const VkResult grid_result = vkCreateGraphicsPipelines(
+        device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &state.grid_pipeline);
 
     vkDestroyShaderModule(device, vert_module, nullptr);
     vkDestroyShaderModule(device, frag_module, nullptr);
 
-    return pipeline_result == VK_SUCCESS;
+    return grid_result == VK_SUCCESS;
 }
 
 [[nodiscard]] bool record_draw_commands(
@@ -429,8 +491,6 @@ bool create_image_views_and_framebuffers(RendererState& state, VkDevice device)
 
     vkCmdBeginRenderPass(cmd, &rp_begin, VK_SUBPASS_CONTENTS_INLINE);
 
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, state.pipeline);
-
     VkViewport viewport{};
     viewport.x        = 0.0f;
     viewport.y        = 0.0f;
@@ -445,9 +505,6 @@ bool create_image_views_and_framebuffers(RendererState& state, VkDevice device)
     scissor.extent = state.extent;
     vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-    const VkDeviceSize offset = 0;
-    vkCmdBindVertexBuffers(cmd, 0, 1, &state.vertex_buffer, &offset);
-
     // Fresh VP every frame — no UBO map, no pipeline recreate, no buffer realloc.
     vkCmdPushConstants(
         cmd,
@@ -457,6 +514,20 @@ bool create_image_views_and_framebuffers(RendererState& state, VkDevice device)
         sizeof(ViewProjPushConstants),
         &push);
 
+    const VkDeviceSize offset = 0;
+
+    // Ground reference grid first (line list, pre-baked VB).
+    if (state.grid_visible
+        && state.grid_pipeline != VK_NULL_HANDLE
+        && state.grid_vertex_buffer != VK_NULL_HANDLE
+        && state.grid_vertex_count > 0) {
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, state.grid_pipeline);
+        vkCmdBindVertexBuffers(cmd, 0, 1, &state.grid_vertex_buffer, &offset);
+        vkCmdDraw(cmd, state.grid_vertex_count, 1, 0, 0);
+    }
+
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, state.pipeline);
+    vkCmdBindVertexBuffers(cmd, 0, 1, &state.vertex_buffer, &offset);
     vkCmdDraw(cmd, 3, 1, 0, 0);
 
     vkCmdEndRenderPass(cmd);
@@ -466,7 +537,11 @@ bool create_image_views_and_framebuffers(RendererState& state, VkDevice device)
 
 }  // namespace
 
-bool renderer_create(RendererState& state, const DeviceState& device, const platform::Window& window)
+bool renderer_create(
+    RendererState& state,
+    const DeviceState& device,
+    const platform::Window& window,
+    const render::GroundGridDesc& grid)
 {
     state = {};
 
@@ -571,8 +646,14 @@ bool renderer_create(RendererState& state, const DeviceState& device, const plat
         return false;
     }
 
-    if (!create_graphics_pipeline(state, device.device)) {
-        std::fprintf(stderr, "[vulkan] Failed to create graphics pipeline "
+    if (!create_grid_vertex_buffer(state, device, grid)) {
+        std::fprintf(stderr, "[vulkan] Failed to create ground grid vertex buffer.\n");
+        renderer_destroy(state, device);
+        return false;
+    }
+
+    if (!create_graphics_pipelines(state, device.device)) {
+        std::fprintf(stderr, "[vulkan] Failed to create graphics pipelines "
                              "(expect %s/triangle.*.spv).\n",
             CSC_SHADER_DIR);
         renderer_destroy(state, device);
@@ -648,11 +729,21 @@ void renderer_destroy(RendererState& state, const DeviceState& device)
         vkDestroyCommandPool(device.device, state.command_pool, nullptr);
     }
 
+    if (state.grid_pipeline != VK_NULL_HANDLE) {
+        vkDestroyPipeline(device.device, state.grid_pipeline, nullptr);
+    }
     if (state.pipeline != VK_NULL_HANDLE) {
         vkDestroyPipeline(device.device, state.pipeline, nullptr);
     }
     if (state.pipeline_layout != VK_NULL_HANDLE) {
         vkDestroyPipelineLayout(device.device, state.pipeline_layout, nullptr);
+    }
+
+    if (state.grid_vertex_buffer != VK_NULL_HANDLE) {
+        vkDestroyBuffer(device.device, state.grid_vertex_buffer, nullptr);
+    }
+    if (state.grid_vertex_memory != VK_NULL_HANDLE) {
+        vkFreeMemory(device.device, state.grid_vertex_memory, nullptr);
     }
 
     if (state.vertex_buffer != VK_NULL_HANDLE) {

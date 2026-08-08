@@ -154,6 +154,16 @@ void world_spawn_default_camera(flecs::world& world, float aspect)
     world.entity().set<Camera3D>(cam);
 }
 
+void world_spawn_default_grid(flecs::world& world)
+{
+    Grid3D grid{};
+    grid.desc.half_extent = 20.f;
+    grid.desc.cell_size   = 1.f;
+    grid.desc.y           = 0.f;
+    grid.desc.visible     = true;
+    world.entity().set<Grid3D>(grid);
+}
+
 bool world_try_get_primary_camera(const flecs::world& world, Camera3D& out)
 {
     bool found = false;
@@ -162,6 +172,19 @@ bool world_try_get_primary_camera(const flecs::world& world, Camera3D& out)
             return;
         }
         out = cam;
+        found = true;
+    });
+    return found;
+}
+
+bool world_try_get_primary_grid(const flecs::world& world, Grid3D& out)
+{
+    bool found = false;
+    world.each([&](const Grid3D& grid) {
+        if (found) {
+            return;
+        }
+        out = grid;
         found = true;
     });
     return found;

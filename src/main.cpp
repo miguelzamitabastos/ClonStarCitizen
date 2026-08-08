@@ -58,6 +58,16 @@ int main()
         ? static_cast<f32>(window.width) / static_cast<f32>(window.height)
         : (16.f / 9.f);
     ecs::world_spawn_default_camera(world, aspect);
+    ecs::world_spawn_default_grid(world);
+
+    ecs::Grid3D grid_scratch{};
+    if (!ecs::world_try_get_primary_grid(world, grid_scratch)) {
+        std::fprintf(stderr, "Primary Grid3D missing after spawn.\n");
+        platform::window_destroy(window);
+        platform::window_shutdown_subsystem();
+        memory::arena_destroy(level_arena);
+        return 1;
+    }
 
     vulkan::InstanceState vk_instance{};
     vulkan::InstanceCreateInfo vk_info{};
@@ -80,8 +90,8 @@ int main()
     }
 
     vulkan::RendererState vk_renderer{};
-    if (!vulkan::renderer_create(vk_renderer, vk_device, window)) {
-        std::fprintf(stderr, "Failed to create Vulkan renderer (swapchain/clear path).\n");
+    if (!vulkan::renderer_create(vk_renderer, vk_device, window, grid_scratch.desc)) {
+        std::fprintf(stderr, "Failed to create Vulkan renderer (swapchain/grid path).\n");
         vulkan::device_destroy(vk_device, vk_instance);
         vulkan::instance_destroy(vk_instance);
         platform::window_destroy(window);
@@ -91,11 +101,13 @@ int main()
     }
 
     std::printf(
-        "ClonStarCitizen online — flecs_entities=%zu arena_used=%zu/%zu validation=%s clear=%.1f,%.1f,%.1f\n",
+        "ClonStarCitizen online — flecs_entities=%zu arena_used=%zu/%zu validation=%s "
+        "grid_verts=%u clear=%.1f,%.1f,%.1f\n",
         ecs::world_alive_count(world),
         memory::arena_bytes_used(level_arena),
         level_arena.capacity,
         vk_instance.validation_enabled ? "on" : "off",
+        vk_renderer.grid_vertex_count,
         vulkan::kClearR,
         vulkan::kClearG,
         vulkan::kClearB);
