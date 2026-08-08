@@ -1,0 +1,16 @@
+---
+description: GLM-only vector math with Vulkan depth macros for C++/graphics work
+globs: "**/*.{cpp,hpp,h,c,cc,cxx,vert,frag,glsl,comp}"
+alwaysApply: false
+---
+
+# GLM Vector Math (STRICT)
+
+Para matemáticas vectoriales, usar EXCLUSIVAMENTE la librería GLM con las macros `#define GLM_FORCE_RADIANS` y `#define GLM_FORCE_DEPTH_ZERO_TO_ONE` (vital para la profundidad en Vulkan).
+
+## Rules
+
+- Include GLM only via `engine/math/glm.hpp` (defines the macros, then includes GLM).
+- Do not use alternative math libraries (Eigen, DirectXMath, handmade vec/mat, etc.) for vectors/matrices.
+- Angles are always radians; clip depth is `[0, 1]` for Vulkan.
+- Keep components POD / DOD-friendly when storing `glm::vec*` / `glm::mat*`.

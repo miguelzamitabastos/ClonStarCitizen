@@ -1,0 +1,27 @@
+# Out-of-source CMake builds
+/build/
+/cmake-build-*/
+/out/
+
+# IDE / editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.cache/
+compile_commands.json
+
+# Compiled artifacts
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dll
+*.exe
+*.pdb
+
+# OS
+.DS_Store
+Thumbs.db

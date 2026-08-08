@@ -1,0 +1,23 @@
+# REGLAS ESTRICTAS DE DESARROLLO - CLON STAR CITIZEN
+
+## 1. Arquitectura y Rendimiento (MANDATORIO)
+- Prohibida la Programación Orientada a Objetos (OOP) clásica para entidades del juego. No uses herencia profunda.
+- Utiliza estrictamente Data-Oriented Design (DOD) y Entity Component System (ECS).
+- Los datos de los componentes deben almacenarse de forma contigua en memoria (Arrays/Vectors de estructuras simples) para maximizar los aciertos en la caché de la CPU (Cache Line friendliness).
+
+## 2. Gestión de Memoria (CERO TOLERANCIA A LATENCIA)
+- Prohibida la asignación de memoria dinámica (ej. `new`, `malloc`, `Instantiate`) dentro del bucle de juego principal (Update/Render loop).
+- Toda la memoria para entidades, proyectiles, asteroides y carga debe ser pre-asignada al inicio del nivel utilizando `Object Pools` o `Arena Allocators`.
+- Destruir un objeto solo debe implicar marcar su slot como `inactivo` en el Pool, nunca liberar memoria en tiempo real.
+
+## 3. GPU y VRAM
+- Minimizar los Draw Calls mediante Instancing. Si hay 1000 asteroides, deben dibujarse con una sola llamada a la GPU.
+- Las texturas y mallas 3D deben cargarse de forma asíncrona en hilos de fondo sin bloquear el hilo principal.
+
+## 4. Matemáticas Vectoriales (MANDATORIO)
+- Para matemáticas vectoriales, usar EXCLUSIVAMENTE la librería GLM con las macros `#define GLM_FORCE_RADIANS` y `#define GLM_FORCE_DEPTH_ZERO_TO_ONE` (vital para la profundidad en Vulkan).
+- Incluir GLM solo a través del header de proyecto `engine/math/glm.hpp` (o tras definir esas macros). Prohibido otro math library para vectores/matrices.
+
+## 5. Código y Agentes
+- Antes de proponer un cambio, verifica que no rompe la regla de "Cero asignaciones dinámicas en el bucle principal".
+- Escribe código limpio, auto-documentado y fuertemente tipado.
