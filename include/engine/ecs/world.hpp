@@ -18,6 +18,13 @@ struct Position {
     f32 z = 0.f;
 };
 
+/// State at the start of the last fixed physics step (for render interpolation).
+struct PreviousPosition {
+    f32 x = 0.f;
+    f32 y = 0.f;
+    f32 z = 0.f;
+};
+
 struct Velocity {
     f32 x = 0.f;
     f32 y = 0.f;
@@ -59,11 +66,46 @@ struct CameraControlParams {
     f32 mouse_sensitivity = 0.0025f;
 };
 
-/// Register gameplay systems (call once at init).
+/// Flecs singleton: remnant alpha for render interpolation (updated by world_tick).
+struct FrameInterpolation {
+    f32 alpha = 0.f;
+};
+
+/// Stack POD accumulator for the fixed-timestep scheduler (no heap in the frame loop).
+struct FrameTimeState {
+    f32 accumulator         = 0.f;
+    f32 fixed_dt            = 1.f / 60.f;
+    f32 alpha               = 0.f; // remnant / fixed_dt for render interp
+    u32 max_steps_per_frame = 5;   // spiral-of-death guard
+};
+
+/// Linear blend Previous→current for renderables (alpha from FrameInterpolation).
+[[nodiscard]] inline Position lerp_position(
+    const PreviousPosition& prev, const Position& curr, f32 alpha)
+{
+    return Position{
+        prev.x + (curr.x - prev.x) * alpha,
+        prev.y + (curr.y - prev.y) * alpha,
+        prev.z + (curr.z - prev.z) * alpha,
+    };
+}
+
+/// Register variable-dt frame systems (camera). Call once at init.
+/// Physics integration is NOT registered here — see physics_integrate_positions.
 void world_register_systems(flecs::world& world);
 
 /// Set camera tunables and ensure InputActions singleton exists. Cursor disable is in input_init.
 void world_bind_camera_input(flecs::world& world, const CameraControlParams& params);
+
+/// Store fixed step duration (from AppConfig.physics_fixed_hz) and ensure FrameInterpolation.
+void world_set_fixed_dt(flecs::world& world, f32 fixed_dt);
+
+/// Fixed-step integrate: snapshot Position→PreviousPosition, then apply Velocity * fixed_dt.
+/// Call only from the fixed-timestep loop (not from world_progress).
+void physics_integrate_positions(flecs::world& world, f32 fixed_dt);
+
+/// Fixed physics steps (accumulator) + one variable-dt world_progress for camera/render systems.
+void world_tick(flecs::world& world, FrameTimeState& ft, f32 frame_dt);
 
 /// Pre-create demo entities at level load (not in the frame loop).
 void world_spawn_demo_entities(flecs::world& world, int count = 3);
@@ -84,7 +126,7 @@ void world_set_primary_camera_aspect(flecs::world& world, float aspect);
 /// Copy the first Grid3D found into `out`. Returns false if none exist.
 [[nodiscard]] bool world_try_get_primary_grid(const flecs::world& world, Grid3D& out);
 
-/// Advance Flecs systems by `dt` seconds (main loop).
+/// Advance variable-dt frame systems (camera control + matrices). Physics is separate.
 void world_progress(flecs::world& world, f32 dt);
 
 [[nodiscard]] std::size_t world_alive_count(const flecs::world& world);

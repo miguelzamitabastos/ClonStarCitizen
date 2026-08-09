@@ -8,6 +8,11 @@ namespace {
 
 constexpr float kPitchLimit = 1.55334306f;   // ~89 deg
 
+/// Stored by world_set_fixed_dt; world_tick prefers FrameTimeState::fixed_dt from the caller.
+struct FixedDt {
+    f32 seconds = 1.f / 60.f;
+};
+
 [[nodiscard]] glm::vec3 forward_from_yaw_pitch(float yaw, float pitch)
 {
     const float cy = std::cos(yaw);
@@ -21,13 +26,10 @@ constexpr float kPitchLimit = 1.55334306f;   // ~89 deg
 
 void world_register_systems(flecs::world& world)
 {
-    world.system<Position, const Velocity>("IntegratePosition")
-        .each([](flecs::iter& it, size_t /*index*/, Position& p, const Velocity& v) {
-            const f32 dt = it.delta_time();
-            p.x += v.x * dt;
-            p.y += v.y * dt;
-            p.z += v.z * dt;
-        });
+    // P0-04: Physics is NOT a Flecs OnUpdate system. A manual fixed-dt accumulator in
+    // world_tick calls physics_integrate_positions so camera systems can keep variable
+    // frame_dt via world.progress (responsive look). Flecs phases alone cannot give one
+    // progress() call two different dts.
 
     // Ordered phases: control eye/target first, then rebuild view/proj.
     const flecs::entity camera_control_phase = world.entity("CameraControlPhase")
@@ -107,12 +109,71 @@ void world_bind_camera_input(flecs::world& world, const CameraControlParams& par
     world.set<InputActions>(InputActions{});
 }
 
+void world_set_fixed_dt(flecs::world& world, f32 fixed_dt)
+{
+    const f32 dt = (fixed_dt > 0.f) ? fixed_dt : (1.f / 60.f);
+    world.set<FixedDt>({dt});
+    world.set<FrameInterpolation>({0.f});
+}
+
+void physics_integrate_positions(flecs::world& world, f32 fixed_dt)
+{
+    // Contiguous archetype iteration — no heap. Snapshot then integrate with fixed_dt.
+    world.each([fixed_dt](PreviousPosition& prev, Position& p, const Velocity& v) {
+        prev.x = p.x;
+        prev.y = p.y;
+        prev.z = p.z;
+        p.x += v.x * fixed_dt;
+        p.y += v.y * fixed_dt;
+        p.z += v.z * fixed_dt;
+    });
+}
+
+void world_tick(flecs::world& world, FrameTimeState& ft, f32 frame_dt)
+{
+    if (const FixedDt* stored = world.try_get<FixedDt>()) {
+        if (stored->seconds > 0.f) {
+            ft.fixed_dt = stored->seconds;
+        }
+    }
+    if (ft.fixed_dt <= 0.f) {
+        ft.fixed_dt = 1.f / 60.f;
+    }
+    if (ft.max_steps_per_frame == 0) {
+        ft.max_steps_per_frame = 1;
+    }
+
+    const f32 clamped_frame = (frame_dt > 0.f) ? frame_dt : 0.f;
+    ft.accumulator += clamped_frame;
+
+    // Spiral-of-death guard: never simulate more than max_steps worth of time.
+    const f32 max_acc = ft.fixed_dt * static_cast<f32>(ft.max_steps_per_frame);
+    if (ft.accumulator > max_acc) {
+        ft.accumulator = max_acc;
+    }
+
+    u32 steps = 0;
+    while (ft.accumulator >= ft.fixed_dt && steps < ft.max_steps_per_frame) {
+        physics_integrate_positions(world, ft.fixed_dt);
+        ft.accumulator -= ft.fixed_dt;
+        ++steps;
+    }
+
+    ft.alpha = ft.accumulator / ft.fixed_dt;
+    world.set<FrameInterpolation>({ft.alpha});
+
+    // Variable frame dt: camera control stays responsive (not locked to physics hz).
+    world_progress(world, clamped_frame);
+}
+
 void world_spawn_demo_entities(flecs::world& world, int count)
 {
     for (int i = 0; i < count; ++i) {
         const f32 fi = static_cast<f32>(i);
+        const Position pos{fi, 0.f, 0.f};
         world.entity()
-            .set<Position>({fi, 0.f, 0.f})
+            .set<Position>(pos)
+            .set<PreviousPosition>({pos.x, pos.y, pos.z})
             .set<Velocity>({0.1f * (fi + 1.f), 0.f, 0.f});
     }
 }

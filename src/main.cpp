@@ -64,6 +64,14 @@ int main(int argc, char** argv)
     flecs::world world{};
     ecs::world_register_systems(world);
     register_game_systems(world);
+
+    // P0-04: fixed physics hz from config; camera stays on variable frame dt via world_tick.
+    ecs::FrameTimeState frame_time{};
+    const f32 physics_hz =
+        (app_config.physics_fixed_hz > 0.f) ? app_config.physics_fixed_hz : 60.f;
+    frame_time.fixed_dt = 1.f / physics_hz;
+    ecs::world_set_fixed_dt(world, frame_time.fixed_dt);
+
     ecs::world_spawn_demo_entities(world, 3);
 
     if (!platform::window_init_subsystem()) {
@@ -197,8 +205,8 @@ int main(int argc, char** argv)
             dt = kMaxDeltaSeconds;
         }
 
-        // Control + UpdateCameraMatrices run inside progress; read VP only afterward.
-        ecs::world_progress(world, dt);
+        // Fixed physics steps + variable-dt camera (world_progress); alpha in FrameInterpolation.
+        ecs::world_tick(world, frame_time, dt);
 
         if (!ecs::world_try_get_primary_camera(world, camera_scratch)) {
             log::log_error(log::LogCategory::Ecs, "Primary Camera3D missing; exiting.");
