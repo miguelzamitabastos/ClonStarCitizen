@@ -178,6 +178,64 @@ void world_spawn_demo_entities(flecs::world& world, int count)
     }
 }
 
+void world_spawn_demo_instances(flecs::world& world, u32 count)
+{
+    // Grid on XZ above the ground plane — level load only, no frame-loop growth.
+    constexpr f32 kSpacing = 1.25f;
+    constexpr f32 kY       = 0.5f;
+    const u32 side = static_cast<u32>(std::ceil(std::sqrt(static_cast<f32>(count))));
+
+    for (u32 i = 0; i < count; ++i) {
+        const u32 gx = i % side;
+        const u32 gz = i / side;
+        const f32 x = (static_cast<f32>(gx) - static_cast<f32>(side) * 0.5f) * kSpacing;
+        const f32 z = (static_cast<f32>(gz) - static_cast<f32>(side) * 0.5f) * kSpacing;
+        const Position pos{x, kY, z};
+
+        // Gentle drift so interpolation is visible without heap work.
+        const f32 phase = static_cast<f32>(i) * 0.017f;
+        const Velocity vel{
+            0.15f * std::cos(phase),
+            0.f,
+            0.15f * std::sin(phase),
+        };
+
+        world.entity()
+            .set<Position>(pos)
+            .set<PreviousPosition>({pos.x, pos.y, pos.z})
+            .set<Velocity>(vel)
+            .set<Scale>({0.55f})
+            .add<InstanceTag>();
+    }
+}
+
+u32 world_gather_instance_transforms(
+    flecs::world& world, f32 alpha, glm::mat4* out_models, u32 capacity)
+{
+    if (out_models == nullptr || capacity == 0) {
+        return 0;
+    }
+
+    u32 written = 0;
+    // Scale is only on InstanceTag entities (level-load spawn). Avoid binding empty tags.
+    world.each([&](const Position& p, const PreviousPosition& prev, const Scale& scale) {
+        if (written >= capacity) {
+            return;
+        }
+        const Position lerped = lerp_position(prev, p, alpha);
+        const glm::mat4 T = glm::translate(
+            glm::mat4(1.f), glm::vec3{lerped.x, lerped.y, lerped.z});
+        const glm::mat4 S = glm::scale(glm::mat4(1.f), glm::vec3{scale.value});
+        out_models[written++] = T * S;
+    });
+    return written;
+}
+
+u32 world_instance_count(const flecs::world& world)
+{
+    return static_cast<u32>(world.count<InstanceTag>());
+}
+
 void world_spawn_default_camera(flecs::world& world, float aspect)
 {
     Camera3D cam{};

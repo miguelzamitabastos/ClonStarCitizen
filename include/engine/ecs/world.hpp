@@ -31,6 +31,14 @@ struct Velocity {
     f32 z = 0.f;
 };
 
+/// Tag: entity participates in the shared-mesh instanced draw (P0-09).
+struct InstanceTag {};
+
+/// Uniform scale for instanced demo meshes (model = T * S).
+struct Scale {
+    f32 value = 1.f;
+};
+
 /// Spatial reference grid on the ground plane (XZ). Contiguous Flecs component storage.
 struct Grid3D {
     render::GroundGridDesc desc{};
@@ -109,6 +117,20 @@ void world_tick(flecs::world& world, FrameTimeState& ft, f32 frame_dt);
 
 /// Pre-create demo entities at level load (not in the frame loop).
 void world_spawn_demo_entities(flecs::world& world, int count = 3);
+
+/// Spawn `count` instanced mesh entities on a grid (level load — preallocated slots).
+/// Prefer >= 512 (demo uses 600). Entities get Position + PreviousPosition + InstanceTag + Scale.
+void world_spawn_demo_instances(flecs::world& world, u32 count);
+
+/// Gather interpolated model matrices for InstanceTag entities into a fixed caller buffer.
+/// Returns number written (clamped to capacity). No heap — writes into `out_models`.
+[[nodiscard]] u32 world_gather_instance_transforms(
+    flecs::world& world,
+    f32 alpha,
+    glm::mat4* out_models,
+    u32 capacity);
+
+[[nodiscard]] u32 world_instance_count(const flecs::world& world);
 
 /// Spawn a default Camera3D entity with the given aspect ratio (level load).
 void world_spawn_default_camera(flecs::world& world, float aspect);

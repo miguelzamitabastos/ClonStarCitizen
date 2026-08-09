@@ -37,6 +37,20 @@ set(GLM_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(GLM_BUILD_INSTALL OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(glm)
 
+# tinygltf (header-only) — TINYGLTF_IMPLEMENTATION in mesh_loader.cpp
+FetchContent_Declare(
+    tinygltf
+    GIT_REPOSITORY https://github.com/syoyo/tinygltf.git
+    GIT_TAG        v2.9.3
+    GIT_SHALLOW    TRUE
+)
+FetchContent_GetProperties(tinygltf)
+if(NOT tinygltf_POPULATED)
+    FetchContent_Populate(tinygltf)
+endif()
+
+find_package(Threads REQUIRED)
+
 # --- Shader compilation (GLSL → SPIR-V) -------------------------------------
 find_program(GLSLC_EXECUTABLE
     NAMES glslc
@@ -58,6 +72,8 @@ file(MAKE_DIRECTORY ${SHADER_BINARY_DIR})
 set(SHADER_SOURCES
     ${SHADER_SOURCE_DIR}/triangle.vert
     ${SHADER_SOURCE_DIR}/triangle.frag
+    ${SHADER_SOURCE_DIR}/mesh.vert
+    ${SHADER_SOURCE_DIR}/mesh.frag
 )
 
 set(SHADER_SPV_FILES "")
@@ -84,6 +100,8 @@ set(ENGINE_SOURCES
     src/engine/memory/arena.cpp
     src/engine/input/input.cpp
     src/engine/ecs/world.cpp
+    src/engine/assets/mesh_loader.cpp
+    src/engine/render/pipeline.cpp
     src/engine/platform/window.cpp
     src/engine/vulkan/instance.cpp
     src/engine/vulkan/device.cpp
@@ -103,6 +121,7 @@ add_dependencies(clon_star_citizen clon_shaders)
 target_include_directories(clon_star_citizen
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${tinygltf_SOURCE_DIR}
 )
 
 target_link_libraries(clon_star_citizen
@@ -111,6 +130,7 @@ target_link_libraries(clon_star_citizen
         glfw
         flecs::flecs_static
         glm::glm
+        Threads::Threads
 )
 
 target_compile_definitions(clon_star_citizen
@@ -132,4 +152,5 @@ message(STATUS "ClonStarCitizen ${PROJECT_VERSION} — C++${CMAKE_CXX_STANDARD}"
 message(STATUS "  Vulkan: ${Vulkan_VERSION}")
 message(STATUS "  Flecs:  v4.1.6 (FetchContent)")
 message(STATUS "  GLM:    1.0.1 (FetchContent, FORCE_RADIANS + DEPTH_ZERO_TO_ONE)")
+message(STATUS "  tinygltf: v2.9.3 (FetchContent, header-only)")
 message(STATUS "  Shaders:${SHADER_BINARY_DIR}")
