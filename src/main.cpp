@@ -7,6 +7,7 @@
 #include "engine/log/log.hpp"
 #include "engine/memory/arena.hpp"
 #include "engine/platform/window.hpp"
+#include "engine/scene/scene.hpp"
 #include "engine/vulkan/device.hpp"
 #include "engine/vulkan/instance.hpp"
 #include "engine/vulkan/renderer.hpp"
@@ -26,7 +27,6 @@ namespace {
 constexpr std::size_t kLevelArenaBytes = 16u * 1024u * 1024u;
 constexpr std::size_t kAssetArenaBytes = 8u * 1024u * 1024u;
 constexpr csc::f32    kMaxDeltaSeconds = 0.05f;
-constexpr csc::u32    kDemoInstanceCount = 600u;
 constexpr csc::f32    kFpsEmaAlpha = 0.1f;
 constexpr const char* kCubeMeshPath = "assets/meshes/cube.gltf";
 
@@ -80,9 +80,6 @@ int main(int argc, char** argv)
     frame_time.fixed_dt = 1.f / physics_hz;
     ecs::world_set_fixed_dt(world, frame_time.fixed_dt);
 
-    // P0-09: >=500 shared-mesh instances, preallocated at level load (not in the loop).
-    ecs::world_spawn_demo_instances(world, kDemoInstanceCount);
-
     if (!platform::window_init_subsystem()) {
         log::log_error(log::LogCategory::Core, "Failed to initialize GLFW.");
         memory::arena_destroy(asset_arena);
@@ -119,12 +116,25 @@ int main(int argc, char** argv)
     const f32 aspect = (window.height > 0)
         ? static_cast<f32>(window.width) / static_cast<f32>(window.height)
         : (16.f / 9.f);
-    ecs::world_spawn_default_camera(world, aspect);
-    ecs::world_spawn_default_grid(world);
+
+    // P0-12: demo scene harness — spawn camera/grid/instances from --scene=/config.
+    scene::SceneContext scene_ctx{};
+    scene_ctx.world       = &world;
+    scene_ctx.level_arena = &level_arena;
+    scene_ctx.aspect      = aspect;
+    if (!scene::scene_setup_by_name(app_config.scene_name, scene_ctx)) {
+        log::log_error(log::LogCategory::Core, "Scene setup failed.");
+        input::input_shutdown(input_sys);
+        platform::window_destroy(window);
+        platform::window_shutdown_subsystem();
+        memory::arena_destroy(asset_arena);
+        memory::arena_destroy(level_arena);
+        return 1;
+    }
 
     ecs::Grid3D grid_scratch{};
     if (!ecs::world_try_get_primary_grid(world, grid_scratch)) {
-        log::log_error(log::LogCategory::Ecs, "Primary Grid3D missing after spawn.");
+        log::log_error(log::LogCategory::Ecs, "Primary Grid3D missing after scene setup.");
         input::input_shutdown(input_sys);
         platform::window_destroy(window);
         platform::window_shutdown_subsystem();
@@ -170,54 +180,56 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    // P0-07: async glTF load into asset arena; main thread uploads when Ready.
     assets::MeshLoader mesh_loader{};
-    if (!assets::mesh_loader_start(mesh_loader, asset_arena, kCubeMeshPath)) {
-        log::log_error(log::LogCategory::Assets, "Failed to start cube mesh load.");
-        vulkan::renderer_destroy(vk_renderer, vk_device);
-        vulkan::device_destroy(vk_device, vk_instance);
-        vulkan::instance_destroy(vk_instance);
-        input::input_shutdown(input_sys);
-        platform::window_destroy(window);
-        platform::window_shutdown_subsystem();
-        memory::arena_destroy(asset_arena);
-        memory::arena_destroy(level_arena);
-        return 1;
-    }
+    bool mesh_loader_started = false;
+    if (scene_ctx.needs_shared_mesh) {
+        if (!assets::mesh_loader_start(mesh_loader, asset_arena, kCubeMeshPath)) {
+            log::log_error(log::LogCategory::Assets, "Failed to start cube mesh load.");
+            vulkan::renderer_destroy(vk_renderer, vk_device);
+            vulkan::device_destroy(vk_device, vk_instance);
+            vulkan::instance_destroy(vk_instance);
+            input::input_shutdown(input_sys);
+            platform::window_destroy(window);
+            platform::window_shutdown_subsystem();
+            memory::arena_destroy(asset_arena);
+            memory::arena_destroy(level_arena);
+            return 1;
+        }
+        mesh_loader_started = true;
 
-    // Bootstrap: wait for first mesh (async API used; sync join at init is OK).
-    assets::mesh_loader_join(mesh_loader);
-    const assets::MeshLoadStatus load_status = assets::mesh_load_status(mesh_loader.slot);
-    if (load_status != assets::MeshLoadStatus::Ready) {
-        log::log_error(
-            log::LogCategory::Assets,
-            "Cube mesh not ready (status=%u err=%s).",
-            static_cast<u32>(load_status),
-            mesh_loader.slot.error);
-        assets::mesh_loader_shutdown(mesh_loader);
-        vulkan::renderer_destroy(vk_renderer, vk_device);
-        vulkan::device_destroy(vk_device, vk_instance);
-        vulkan::instance_destroy(vk_instance);
-        input::input_shutdown(input_sys);
-        platform::window_destroy(window);
-        platform::window_shutdown_subsystem();
-        memory::arena_destroy(asset_arena);
-        memory::arena_destroy(level_arena);
-        return 1;
-    }
+        assets::mesh_loader_join(mesh_loader);
+        const assets::MeshLoadStatus load_status = assets::mesh_load_status(mesh_loader.slot);
+        if (load_status != assets::MeshLoadStatus::Ready) {
+            log::log_error(
+                log::LogCategory::Assets,
+                "Cube mesh not ready (status=%u err=%s).",
+                static_cast<u32>(load_status),
+                mesh_loader.slot.error);
+            assets::mesh_loader_shutdown(mesh_loader);
+            vulkan::renderer_destroy(vk_renderer, vk_device);
+            vulkan::device_destroy(vk_device, vk_instance);
+            vulkan::instance_destroy(vk_instance);
+            input::input_shutdown(input_sys);
+            platform::window_destroy(window);
+            platform::window_shutdown_subsystem();
+            memory::arena_destroy(asset_arena);
+            memory::arena_destroy(level_arena);
+            return 1;
+        }
 
-    if (!vulkan::renderer_upload_mesh(vk_renderer, vk_device, mesh_loader.slot.cpu)) {
-        log::log_error(log::LogCategory::Vulkan, "Failed to upload cube mesh to GPU.");
-        assets::mesh_loader_shutdown(mesh_loader);
-        vulkan::renderer_destroy(vk_renderer, vk_device);
-        vulkan::device_destroy(vk_device, vk_instance);
-        vulkan::instance_destroy(vk_instance);
-        input::input_shutdown(input_sys);
-        platform::window_destroy(window);
-        platform::window_shutdown_subsystem();
-        memory::arena_destroy(asset_arena);
-        memory::arena_destroy(level_arena);
-        return 1;
+        if (!vulkan::renderer_upload_mesh(vk_renderer, vk_device, mesh_loader.slot.cpu)) {
+            log::log_error(log::LogCategory::Vulkan, "Failed to upload cube mesh to GPU.");
+            assets::mesh_loader_shutdown(mesh_loader);
+            vulkan::renderer_destroy(vk_renderer, vk_device);
+            vulkan::device_destroy(vk_device, vk_instance);
+            vulkan::instance_destroy(vk_instance);
+            input::input_shutdown(input_sys);
+            platform::window_destroy(window);
+            platform::window_shutdown_subsystem();
+            memory::arena_destroy(asset_arena);
+            memory::arena_destroy(level_arena);
+            return 1;
+        }
     }
 
     debug::DebugUiState debug_ui{};
@@ -251,7 +263,6 @@ int main(int argc, char** argv)
     input::ActionState action_scratch{};
     f32 fps_ema = 0.f;
 
-    // Fixed stack scratch for instance gather — no heap in the loop.
     glm::mat4 instance_scratch[vulkan::kMaxInstancesPerDrawCall]{};
 
     while (!platform::window_should_close(window)) {
@@ -270,7 +281,6 @@ int main(int argc, char** argv)
 
         input::input_poll(input_sys, action_scratch);
 
-        // P0-11: ImGui wants the mouse — suppress look before camera systems see it.
         if (debug::debug_ui_want_capture_mouse(debug_ui) || debug_ui.cursor_for_ui) {
             action_scratch.axes[static_cast<u16>(input::ActionAxis::LookX)] = 0.f;
             action_scratch.axes[static_cast<u16>(input::ActionAxis::LookY)] = 0.f;
@@ -336,7 +346,9 @@ int main(int argc, char** argv)
         ++scratch.frame_index;
     }
 
-    assets::mesh_loader_shutdown(mesh_loader);
+    if (mesh_loader_started) {
+        assets::mesh_loader_shutdown(mesh_loader);
+    }
     debug::debug_ui_shutdown(debug_ui, vk_device);
     vulkan::renderer_destroy(vk_renderer, vk_device);
     vulkan::device_destroy(vk_device, vk_instance);

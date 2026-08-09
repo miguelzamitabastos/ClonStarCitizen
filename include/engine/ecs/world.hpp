@@ -122,6 +122,9 @@ void world_spawn_demo_entities(flecs::world& world, int count = 3);
 /// Prefer >= 512 (demo uses 600). Entities get Position + PreviousPosition + InstanceTag + Scale.
 void world_spawn_demo_instances(flecs::world& world, u32 count);
 
+/// Spawn a single centered instance (mesh_viewer scene) at level load.
+void world_spawn_centered_instance(flecs::world& world, f32 scale = 1.5f);
+
 /// Gather interpolated model matrices for InstanceTag entities into a fixed caller buffer.
 /// Returns number written (clamped to capacity). No heap — writes into `out_models`.
 [[nodiscard]] u32 world_gather_instance_transforms(

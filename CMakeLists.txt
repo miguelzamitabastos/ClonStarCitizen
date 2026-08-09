@@ -135,6 +135,7 @@ set(ENGINE_SOURCES
     src/engine/ecs/world.cpp
     src/engine/assets/mesh_loader.cpp
     src/engine/render/pipeline.cpp
+    src/engine/scene/scene.cpp
     src/engine/platform/window.cpp
     src/engine/vulkan/instance.cpp
     src/engine/vulkan/device.cpp

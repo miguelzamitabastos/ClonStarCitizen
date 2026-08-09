@@ -209,6 +209,17 @@ void world_spawn_demo_instances(flecs::world& world, u32 count)
     }
 }
 
+void world_spawn_centered_instance(flecs::world& world, f32 scale)
+{
+    const Position pos{0.f, 0.75f, 0.f};
+    world.entity()
+        .set<Position>(pos)
+        .set<PreviousPosition>({pos.x, pos.y, pos.z})
+        .set<Velocity>({0.f, 0.f, 0.f})
+        .set<Scale>({scale})
+        .add<InstanceTag>();
+}
+
 u32 world_gather_instance_transforms(
     flecs::world& world, f32 alpha, glm::mat4* out_models, u32 capacity)
 {
