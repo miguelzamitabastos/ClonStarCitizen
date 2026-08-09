@@ -72,6 +72,151 @@ VkExtent2D choose_extent(const VkSurfaceCapabilitiesKHR& caps, const platform::W
     return extent;
 }
 
+[[nodiscard]] u32 find_memory_type(
+    VkPhysicalDevice physical_device,
+    u32 type_filter,
+    VkMemoryPropertyFlags properties)
+{
+    VkPhysicalDeviceMemoryProperties mem_props{};
+    vkGetPhysicalDeviceMemoryProperties(physical_device, &mem_props);
+
+    for (u32 i = 0; i < mem_props.memoryTypeCount; ++i) {
+        if ((type_filter & (1u << i)) != 0
+            && (mem_props.memoryTypes[i].propertyFlags & properties) == properties) {
+            return i;
+        }
+    }
+    return UINT32_MAX;
+}
+
+[[nodiscard]] bool has_stencil_component(VkFormat format)
+{
+    return format == VK_FORMAT_D32_SFLOAT_S8_UINT || format == VK_FORMAT_D24_UNORM_S8_UINT;
+}
+
+[[nodiscard]] VkFormat find_depth_format(VkPhysicalDevice physical_device)
+{
+    const VkFormat candidates[] = {
+        VK_FORMAT_D32_SFLOAT,
+        VK_FORMAT_D24_UNORM_S8_UINT,
+    };
+
+    for (const VkFormat format : candidates) {
+        VkFormatProperties props{};
+        vkGetPhysicalDeviceFormatProperties(physical_device, format, &props);
+        if ((props.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) != 0) {
+            return format;
+        }
+    }
+    return VK_FORMAT_UNDEFINED;
+}
+
+void destroy_depth_resources(RendererState& state, VkDevice device)
+{
+    if (device == VK_NULL_HANDLE) {
+        state.depth_view   = VK_NULL_HANDLE;
+        state.depth_image  = VK_NULL_HANDLE;
+        state.depth_memory = VK_NULL_HANDLE;
+        state.depth_format = VK_FORMAT_UNDEFINED;
+        return;
+    }
+
+    if (state.depth_view != VK_NULL_HANDLE) {
+        vkDestroyImageView(device, state.depth_view, nullptr);
+        state.depth_view = VK_NULL_HANDLE;
+    }
+    if (state.depth_image != VK_NULL_HANDLE) {
+        vkDestroyImage(device, state.depth_image, nullptr);
+        state.depth_image = VK_NULL_HANDLE;
+    }
+    if (state.depth_memory != VK_NULL_HANDLE) {
+        vkFreeMemory(device, state.depth_memory, nullptr);
+        state.depth_memory = VK_NULL_HANDLE;
+    }
+    state.depth_format = VK_FORMAT_UNDEFINED;
+}
+
+[[nodiscard]] bool create_depth_resources(RendererState& state, const DeviceState& device)
+{
+    state.depth_format = find_depth_format(device.physical_device);
+    if (state.depth_format == VK_FORMAT_UNDEFINED) {
+        std::fprintf(stderr, "[vulkan] No suitable depth format (D32_SFLOAT / D24_UNORM_S8_UINT).\n");
+        return false;
+    }
+
+    VkImageCreateInfo image_info{};
+    image_info.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    image_info.imageType     = VK_IMAGE_TYPE_2D;
+    image_info.extent.width  = state.extent.width;
+    image_info.extent.height = state.extent.height;
+    image_info.extent.depth  = 1;
+    image_info.mipLevels     = 1;
+    image_info.arrayLayers   = 1;
+    image_info.format        = state.depth_format;
+    image_info.tiling        = VK_IMAGE_TILING_OPTIMAL;
+    image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    image_info.usage         = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    image_info.samples       = VK_SAMPLE_COUNT_1_BIT;
+    image_info.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
+
+    if (vkCreateImage(device.device, &image_info, nullptr, &state.depth_image) != VK_SUCCESS) {
+        std::fprintf(stderr, "[vulkan] Failed to create depth image.\n");
+        return false;
+    }
+
+    VkMemoryRequirements mem_reqs{};
+    vkGetImageMemoryRequirements(device.device, state.depth_image, &mem_reqs);
+
+    const u32 memory_type = find_memory_type(
+        device.physical_device, mem_reqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (memory_type == UINT32_MAX) {
+        std::fprintf(stderr, "[vulkan] No DEVICE_LOCAL memory type for depth image.\n");
+        destroy_depth_resources(state, device.device);
+        return false;
+    }
+
+    VkMemoryAllocateInfo alloc_info{};
+    alloc_info.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    alloc_info.allocationSize  = mem_reqs.size;
+    alloc_info.memoryTypeIndex = memory_type;
+
+    if (vkAllocateMemory(device.device, &alloc_info, nullptr, &state.depth_memory) != VK_SUCCESS) {
+        std::fprintf(stderr, "[vulkan] Failed to allocate depth image memory.\n");
+        destroy_depth_resources(state, device.device);
+        return false;
+    }
+
+    if (vkBindImageMemory(device.device, state.depth_image, state.depth_memory, 0) != VK_SUCCESS) {
+        std::fprintf(stderr, "[vulkan] Failed to bind depth image memory.\n");
+        destroy_depth_resources(state, device.device);
+        return false;
+    }
+
+    VkImageAspectFlags aspect = VK_IMAGE_ASPECT_DEPTH_BIT;
+    if (has_stencil_component(state.depth_format)) {
+        aspect |= VK_IMAGE_ASPECT_STENCIL_BIT;
+    }
+
+    VkImageViewCreateInfo view_info{};
+    view_info.sType                           = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    view_info.image                           = state.depth_image;
+    view_info.viewType                        = VK_IMAGE_VIEW_TYPE_2D;
+    view_info.format                          = state.depth_format;
+    view_info.subresourceRange.aspectMask     = aspect;
+    view_info.subresourceRange.baseMipLevel   = 0;
+    view_info.subresourceRange.levelCount     = 1;
+    view_info.subresourceRange.baseArrayLayer = 0;
+    view_info.subresourceRange.layerCount     = 1;
+
+    if (vkCreateImageView(device.device, &view_info, nullptr, &state.depth_view) != VK_SUCCESS) {
+        std::fprintf(stderr, "[vulkan] Failed to create depth image view.\n");
+        destroy_depth_resources(state, device.device);
+        return false;
+    }
+
+    return true;
+}
+
 bool create_render_pass(RendererState& state, VkDevice device)
 {
     VkAttachmentDescription color_attachment{};
@@ -84,27 +229,49 @@ bool create_render_pass(RendererState& state, VkDevice device)
     color_attachment.initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
     color_attachment.finalLayout    = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
+    VkAttachmentDescription depth_attachment{};
+    depth_attachment.format         = state.depth_format;
+    depth_attachment.samples        = VK_SAMPLE_COUNT_1_BIT;
+    depth_attachment.loadOp         = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    depth_attachment.storeOp        = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    depth_attachment.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    depth_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    depth_attachment.initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
+    depth_attachment.finalLayout    = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
+    const VkAttachmentDescription attachments[] = {color_attachment, depth_attachment};
+
     VkAttachmentReference color_ref{};
     color_ref.attachment = 0;
     color_ref.layout     = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
+    VkAttachmentReference depth_ref{};
+    depth_ref.attachment = 1;
+    depth_ref.layout     = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+
     VkSubpassDescription subpass{};
-    subpass.pipelineBindPoint    = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    subpass.colorAttachmentCount = 1;
-    subpass.pColorAttachments    = &color_ref;
+    subpass.pipelineBindPoint       = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.colorAttachmentCount    = 1;
+    subpass.pColorAttachments       = &color_ref;
+    subpass.pDepthStencilAttachment = &depth_ref;
 
     VkSubpassDependency dependency{};
-    dependency.srcSubpass    = VK_SUBPASS_EXTERNAL;
-    dependency.dstSubpass    = 0;
-    dependency.srcStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    dependency.srcSubpass   = VK_SUBPASS_EXTERNAL;
+    dependency.dstSubpass   = 0;
+    dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+                            | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT
+                            | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
     dependency.srcAccessMask = 0;
-    dependency.dstStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    dependency.dstStageMask  = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+                             | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT
+                             | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+    dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
+                             | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 
     VkRenderPassCreateInfo pass_info{};
     pass_info.sType           = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-    pass_info.attachmentCount = 1;
-    pass_info.pAttachments    = &color_attachment;
+    pass_info.attachmentCount = 2;
+    pass_info.pAttachments    = attachments;
     pass_info.subpassCount    = 1;
     pass_info.pSubpasses      = &subpass;
     pass_info.dependencyCount = 1;
@@ -135,12 +302,12 @@ bool create_image_views_and_framebuffers(RendererState& state, VkDevice device)
             return false;
         }
 
-        VkImageView attachments[] = {state.image_views[i]};
+        const VkImageView attachments[] = {state.image_views[i], state.depth_view};
 
         VkFramebufferCreateInfo fb_info{};
         fb_info.sType           = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
         fb_info.renderPass      = state.render_pass;
-        fb_info.attachmentCount = 1;
+        fb_info.attachmentCount = 2;
         fb_info.pAttachments    = attachments;
         fb_info.width           = state.extent.width;
         fb_info.height          = state.extent.height;
@@ -188,23 +355,6 @@ bool create_image_views_and_framebuffers(RendererState& state, VkDevice device)
     info.codeSize = words.size() * sizeof(u32);
     info.pCode    = words.data();
     return vkCreateShaderModule(device, &info, nullptr, out_module) == VK_SUCCESS;
-}
-
-[[nodiscard]] u32 find_memory_type(
-    VkPhysicalDevice physical_device,
-    u32 type_filter,
-    VkMemoryPropertyFlags properties)
-{
-    VkPhysicalDeviceMemoryProperties mem_props{};
-    vkGetPhysicalDeviceMemoryProperties(physical_device, &mem_props);
-
-    for (u32 i = 0; i < mem_props.memoryTypeCount; ++i) {
-        if ((type_filter & (1u << i)) != 0
-            && (mem_props.memoryTypes[i].propertyFlags & properties) == properties) {
-            return i;
-        }
-    }
-    return UINT32_MAX;
 }
 
 [[nodiscard]] bool create_host_vertex_buffer(
@@ -389,6 +539,14 @@ bool create_image_views_and_framebuffers(RendererState& state, VkDevice device)
     multisample.sType                = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
     multisample.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
+    VkPipelineDepthStencilStateCreateInfo depth_stencil{};
+    depth_stencil.sType            = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+    depth_stencil.depthTestEnable  = VK_TRUE;
+    depth_stencil.depthWriteEnable = VK_TRUE;
+    depth_stencil.depthCompareOp   = VK_COMPARE_OP_LESS;
+    depth_stencil.depthBoundsTestEnable = VK_FALSE;
+    depth_stencil.stencilTestEnable     = VK_FALSE;
+
     VkPipelineColorBlendAttachmentState blend_attachment{};
     blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
                                     | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
@@ -432,6 +590,7 @@ bool create_image_views_and_framebuffers(RendererState& state, VkDevice device)
     pipeline_info.pViewportState      = &viewport_state;
     pipeline_info.pRasterizationState = &raster;
     pipeline_info.pMultisampleState   = &multisample;
+    pipeline_info.pDepthStencilState  = &depth_stencil;
     pipeline_info.pColorBlendState    = &color_blend;
     pipeline_info.pDynamicState       = &dynamic;
     pipeline_info.layout              = state.pipeline_layout;
@@ -474,11 +633,13 @@ bool create_image_views_and_framebuffers(RendererState& state, VkDevice device)
         return false;
     }
 
-    VkClearValue clear_value{};
-    clear_value.color.float32[0] = kClearR;
-    clear_value.color.float32[1] = kClearG;
-    clear_value.color.float32[2] = kClearB;
-    clear_value.color.float32[3] = kClearA;
+    VkClearValue clear_values[2]{};
+    clear_values[0].color.float32[0] = kClearR;
+    clear_values[0].color.float32[1] = kClearG;
+    clear_values[0].color.float32[2] = kClearB;
+    clear_values[0].color.float32[3] = kClearA;
+    clear_values[1].depthStencil.depth   = 1.0f;
+    clear_values[1].depthStencil.stencil = 0;
 
     VkRenderPassBeginInfo rp_begin{};
     rp_begin.sType             = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -486,8 +647,8 @@ bool create_image_views_and_framebuffers(RendererState& state, VkDevice device)
     rp_begin.framebuffer       = state.framebuffers[image_index];
     rp_begin.renderArea.offset = {0, 0};
     rp_begin.renderArea.extent = state.extent;
-    rp_begin.clearValueCount   = 1;
-    rp_begin.pClearValues      = &clear_value;
+    rp_begin.clearValueCount   = 2;
+    rp_begin.pClearValues      = clear_values;
 
     vkCmdBeginRenderPass(cmd, &rp_begin, VK_SUBPASS_CONTENTS_INLINE);
 
@@ -628,6 +789,12 @@ bool renderer_create(
     state.image_count = actual_count;
     vkGetSwapchainImagesKHR(device.device, state.swapchain, &actual_count, state.images);
 
+    if (!create_depth_resources(state, device)) {
+        std::fprintf(stderr, "[vulkan] Failed to create depth resources.\n");
+        renderer_destroy(state, device);
+        return false;
+    }
+
     if (!create_render_pass(state, device.device)) {
         std::fprintf(stderr, "[vulkan] Failed to create render pass.\n");
         renderer_destroy(state, device);
@@ -761,6 +928,8 @@ void renderer_destroy(RendererState& state, const DeviceState& device)
             vkDestroyImageView(device.device, state.image_views[i], nullptr);
         }
     }
+
+    destroy_depth_resources(state, device.device);
 
     if (state.render_pass != VK_NULL_HANDLE) {
         vkDestroyRenderPass(device.device, state.render_pass, nullptr);

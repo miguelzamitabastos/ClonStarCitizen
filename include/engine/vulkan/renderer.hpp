@@ -31,6 +31,13 @@ struct RendererState {
     VkFramebuffer    framebuffers[kMaxSwapchainImages]{};
     VkCommandBuffer  command_buffers[kMaxSwapchainImages]{};
 
+    /// Depth attachment (P0-01): one image shared across swapchain framebuffers.
+    /// Created/destroyed only in renderer_create / renderer_destroy (resize reuses helpers later).
+    VkImage          depth_image     = VK_NULL_HANDLE;
+    VkDeviceMemory   depth_memory    = VK_NULL_HANDLE;
+    VkImageView      depth_view      = VK_NULL_HANDLE;
+    VkFormat         depth_format    = VK_FORMAT_UNDEFINED;
+
     VkRenderPass     render_pass     = VK_NULL_HANDLE;
     VkCommandPool    command_pool    = VK_NULL_HANDLE;
 
