@@ -1,5 +1,6 @@
 #include "engine/vulkan/renderer.hpp"
 
+#include "engine/debug/debug_ui.hpp"
 #include "engine/log/log.hpp"
 
 #include <algorithm>
@@ -1059,7 +1060,8 @@ void destroy_gpu_mesh(GpuMesh& mesh, VkDevice device)
     RendererState& state,
     u32 image_index,
     u32 frame_index,
-    const ViewProjPushConstants& push)
+    const ViewProjPushConstants& push,
+    debug::DebugUiState* debug_ui)
 {
     VkCommandBuffer cmd = state.command_buffers[image_index];
 
@@ -1153,6 +1155,11 @@ void destroy_gpu_mesh(GpuMesh& mesh, VkDevice device)
             vkCmdDrawIndexed(
                 cmd, state.demo_mesh.index_count, state.instance_count, 0, 0, 0);
         }
+    }
+
+    // P0-11: Dear ImGui overlay inside the active render pass (before EndRenderPass).
+    if (debug_ui != nullptr) {
+        debug::debug_ui_render(*debug_ui, cmd);
     }
 
     vkCmdEndRenderPass(cmd);
@@ -1647,20 +1654,36 @@ bool renderer_draw_frame(
     const DeviceState& device,
     platform::Window& window,
     const glm::mat4& view,
-    const glm::mat4& projection)
+    const glm::mat4& projection,
+    debug::DebugUiState* debug_ui,
+    const debug::DebugUiStats* debug_stats)
 {
+    (void)debug_stats; // Built by caller before draw; recording uses debug_ui only.
+
     platform::window_query_framebuffer_size(window);
 
     if (window.width <= 0 || window.height <= 0) {
+        if (debug_ui != nullptr) {
+            debug::debug_ui_render(*debug_ui, VK_NULL_HANDLE);
+        }
         return true;
     }
 
     if (window.framebuffer_resized) {
         if (!renderer_recreate_swapchain(state, device, window)) {
+            if (debug_ui != nullptr) {
+                debug::debug_ui_render(*debug_ui, VK_NULL_HANDLE);
+            }
             return false;
         }
         window.framebuffer_resized = false;
+        if (debug_ui != nullptr) {
+            debug::debug_ui_on_swapchain_recreated(*debug_ui, state.image_count);
+        }
         if (state.extent.width == 0 || state.extent.height == 0) {
+            if (debug_ui != nullptr) {
+                debug::debug_ui_render(*debug_ui, VK_NULL_HANDLE);
+            }
             return true;
         }
     }
@@ -1680,13 +1703,21 @@ bool renderer_draw_frame(
 
     if (acquire == VK_ERROR_OUT_OF_DATE_KHR) {
         window.framebuffer_resized = false;
-        return renderer_recreate_swapchain(state, device, window);
+        const bool ok = renderer_recreate_swapchain(state, device, window);
+        if (debug_ui != nullptr) {
+            debug::debug_ui_on_swapchain_recreated(*debug_ui, state.image_count);
+            debug::debug_ui_render(*debug_ui, VK_NULL_HANDLE);
+        }
+        return ok;
     }
     if (acquire != VK_SUCCESS && acquire != VK_SUBOPTIMAL_KHR) {
         log::log_error(
             log::LogCategory::Vulkan,
             "vkAcquireNextImageKHR failed (%d).",
             static_cast<int>(acquire));
+        if (debug_ui != nullptr) {
+            debug::debug_ui_render(*debug_ui, VK_NULL_HANDLE);
+        }
         return false;
     }
 
@@ -1702,7 +1733,7 @@ bool renderer_draw_frame(
     }
 
     const ViewProjPushConstants push{view_proj};
-    if (!record_draw_commands(state, image_index, frame, push)) {
+    if (!record_draw_commands(state, image_index, frame, push, debug_ui)) {
         log::log_error(log::LogCategory::Vulkan, "Failed to record draw commands.");
         return false;
     }
@@ -1737,6 +1768,9 @@ bool renderer_draw_frame(
         window.framebuffer_resized = false;
         if (!renderer_recreate_swapchain(state, device, window)) {
             return false;
+        }
+        if (debug_ui != nullptr) {
+            debug::debug_ui_on_swapchain_recreated(*debug_ui, state.image_count);
         }
     } else if (present_result != VK_SUCCESS) {
         return false;

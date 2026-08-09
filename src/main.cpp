@@ -1,6 +1,7 @@
 #include "engine/assets/mesh_loader.hpp"
 #include "engine/config/config.hpp"
 #include "engine/core/types.hpp"
+#include "engine/debug/debug_ui.hpp"
 #include "engine/ecs/world.hpp"
 #include "engine/input/input.hpp"
 #include "engine/log/log.hpp"
@@ -26,6 +27,7 @@ constexpr std::size_t kLevelArenaBytes = 16u * 1024u * 1024u;
 constexpr std::size_t kAssetArenaBytes = 8u * 1024u * 1024u;
 constexpr csc::f32    kMaxDeltaSeconds = 0.05f;
 constexpr csc::u32    kDemoInstanceCount = 600u;
+constexpr csc::f32    kFpsEmaAlpha = 0.1f;
 constexpr const char* kCubeMeshPath = "assets/meshes/cube.gltf";
 
 struct FrameScratch {
@@ -218,6 +220,15 @@ int main(int argc, char** argv)
         return 1;
     }
 
+    debug::DebugUiState debug_ui{};
+#if CSC_DEBUG_UI
+    if (!debug::debug_ui_init(debug_ui, window.handle, vk_instance, vk_device, vk_renderer)) {
+        log::log_warn(log::LogCategory::Core, "Debug UI init failed — continuing without overlay.");
+    }
+#else
+    (void)debug::debug_ui_init(debug_ui, window.handle, vk_instance, vk_device, vk_renderer);
+#endif
+
     log::log_info(
         log::LogCategory::Core,
         "ClonStarCitizen online — scene=%s instances=%u flecs_pos=%zu asset_arena=%zu/%zu "
@@ -238,6 +249,7 @@ int main(int argc, char** argv)
     i32 last_fb_w = window.width;
     i32 last_fb_h = window.height;
     input::ActionState action_scratch{};
+    f32 fps_ema = 0.f;
 
     // Fixed stack scratch for instance gather — no heap in the loop.
     glm::mat4 instance_scratch[vulkan::kMaxInstancesPerDrawCall]{};
@@ -257,6 +269,12 @@ int main(int argc, char** argv)
         }
 
         input::input_poll(input_sys, action_scratch);
+
+        // P0-11: ImGui wants the mouse — suppress look before camera systems see it.
+        if (debug::debug_ui_want_capture_mouse(debug_ui) || debug_ui.cursor_for_ui) {
+            action_scratch.axes[static_cast<u16>(input::ActionAxis::LookX)] = 0.f;
+            action_scratch.axes[static_cast<u16>(input::ActionAxis::LookY)] = 0.f;
+        }
         world.set<ecs::InputActions>({action_scratch});
 
         const auto now = std::chrono::steady_clock::now();
@@ -264,6 +282,13 @@ int main(int argc, char** argv)
         previous = now;
         if (dt > kMaxDeltaSeconds) {
             dt = kMaxDeltaSeconds;
+        }
+
+        if (dt > 0.f) {
+            const f32 instant_fps = 1.f / dt;
+            fps_ema = (fps_ema <= 0.f)
+                ? instant_fps
+                : (fps_ema + kFpsEmaAlpha * (instant_fps - fps_ema));
         }
 
         ecs::world_tick(world, frame_time, dt);
@@ -280,8 +305,30 @@ int main(int argc, char** argv)
             vulkan::kMaxInstancesPerDrawCall);
         vulkan::renderer_set_instances(vk_renderer, instance_scratch, gathered);
 
+        debug::DebugUiStats ui_stats{};
+        ui_stats.fps            = fps_ema;
+        ui_stats.entity_count   = static_cast<u32>(ecs::world_alive_count(world));
+        ui_stats.instance_count = gathered;
+        ui_stats.pipeline_count = vk_renderer.pipelines.count;
+        ui_stats.mesh_ready     = vk_renderer.demo_mesh.ready;
+        ui_stats.cam_x          = camera_scratch.eye.x;
+        ui_stats.cam_y          = camera_scratch.eye.y;
+        ui_stats.cam_z          = camera_scratch.eye.z;
+
+        debug::DebugUiState* ui_ptr = debug_ui.ready ? &debug_ui : nullptr;
+        if (ui_ptr != nullptr) {
+            debug::debug_ui_begin_frame(debug_ui);
+            debug::debug_ui_build(debug_ui, ui_stats);
+        }
+
         if (!vulkan::renderer_draw_frame(
-                vk_renderer, vk_device, window, camera_scratch.view, camera_scratch.projection)) {
+                vk_renderer,
+                vk_device,
+                window,
+                camera_scratch.view,
+                camera_scratch.projection,
+                ui_ptr,
+                ui_ptr != nullptr ? &ui_stats : nullptr)) {
             log::log_error(log::LogCategory::Vulkan, "Renderer draw failed; exiting.");
             break;
         }
@@ -290,6 +337,7 @@ int main(int argc, char** argv)
     }
 
     assets::mesh_loader_shutdown(mesh_loader);
+    debug::debug_ui_shutdown(debug_ui, vk_device);
     vulkan::renderer_destroy(vk_renderer, vk_device);
     vulkan::device_destroy(vk_device, vk_instance);
     vulkan::instance_destroy(vk_instance);

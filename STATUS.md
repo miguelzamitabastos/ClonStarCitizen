@@ -3,7 +3,7 @@
 ## Fase activa: Fase 0 — Cimientos del Motor
 
 ## Progreso por documento
-- P0 Cimientos del Motor: [###########..] 11/13 tareas
+- P0 Cimientos del Motor: [############.] 12/13 tareas
   - [x] P0-01 Depth buffer + depth testing
   - [x] P0-02 Resize de swapchain / minimizado
   - [x] P0-03 Sistema de input abstraído
@@ -14,7 +14,7 @@
   - [x] P0-08 Texturas + descriptor sets/UBO
   - [x] P0-09 Draw indexed instanced
   - [x] P0-10 Abstracción material/pipeline
-  - [ ] P0-11 Overlay depuración ImGui
+  - [x] P0-11 Overlay depuración ImGui
   - [ ] P0-12 Harness escenas demo
   - [x] P0-13 Esqueleto src/game/*
 
@@ -22,6 +22,7 @@
 - (ninguno)
 
 ## Bitácora (más reciente arriba, una línea por tarea)
+- 2026-08-09 [P0-11] Dear ImGui v1.91.0 overlay (FPS/entidades/instancias/pipelines); F1 cursor; draw inside render pass.
 - 2026-08-09 [P0-09] Instancing indexado: 600 cubos / 1 draw. kMaxInstancesPerDrawCall=1024. Captura: artifacts/screenshots/p0-09-instancing.png.
 - 2026-08-09 [P0-10] PipelineCatalog/MaterialCatalog (cap 16); handles en lugar de VkPipeline crudos en gameplay.
 - 2026-08-09 [P0-08] UBO per-frame + sampler; textura blanca 1x1; shaders mesh.vert/frag.

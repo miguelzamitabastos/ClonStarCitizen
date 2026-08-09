@@ -10,6 +10,11 @@
 
 #include <vulkan/vulkan.h>
 
+namespace csc::debug {
+struct DebugUiState;
+struct DebugUiStats;
+}
+
 namespace csc::vulkan {
 
 inline constexpr u32 kMaxSwapchainImages = 8;
@@ -129,12 +134,16 @@ void renderer_set_instances(RendererState& state, const glm::mat4* models, u32 c
     const DeviceState& device,
     const assets::MeshCpu& mesh);
 
-/// Acquire → clear → grid + optional instanced mesh → submit → present.
+/// Acquire → clear → grid + optional instanced mesh → ImGui (optional) → submit → present.
+/// `debug_ui` / `debug_stats` nullptr = no overlay (P0-11). Stats pointer reserved for
+/// callers that build UI before draw; recording uses `debug_ui` only.
 [[nodiscard]] bool renderer_draw_frame(
     RendererState& state,
     const DeviceState& device,
     platform::Window& window,
     const glm::mat4& view,
-    const glm::mat4& projection);
+    const glm::mat4& projection,
+    debug::DebugUiState* debug_ui = nullptr,
+    const debug::DebugUiStats* debug_stats = nullptr);
 
 }  // namespace csc::vulkan
