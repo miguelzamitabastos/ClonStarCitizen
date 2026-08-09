@@ -31,8 +31,8 @@ struct RendererState {
     VkFramebuffer    framebuffers[kMaxSwapchainImages]{};
     VkCommandBuffer  command_buffers[kMaxSwapchainImages]{};
 
-    /// Depth attachment (P0-01): one image shared across swapchain framebuffers.
-    /// Created/destroyed only in renderer_create / renderer_destroy (resize reuses helpers later).
+    /// Depth attachment (P0-01/P0-02): one image shared across swapchain framebuffers.
+    /// Created at init; destroyed/recreated with swapchain on resize (not in steady-state draw).
     VkImage          depth_image     = VK_NULL_HANDLE;
     VkDeviceMemory   depth_memory    = VK_NULL_HANDLE;
     VkImageView      depth_view      = VK_NULL_HANDLE;
@@ -67,12 +67,23 @@ struct RendererState {
 
 void renderer_destroy(RendererState& state, const DeviceState& device);
 
+/// Reconstruct swapchain + depth + image views + framebuffers for the current window size.
+/// Keeps render pass / pipelines / layout / VBs / sync when `image_format` is unchanged
+/// (`choose_surface_format` prefers a stable B8G8R8A8_SRGB). If the format ever changes,
+/// recreates render pass + pipelines as well (documented in STATUS.md).
+/// Reallocates command buffers only when `image_count` changes. No-op skip when extent is 0x0.
+[[nodiscard]] bool renderer_recreate_swapchain(
+    RendererState& state,
+    const DeviceState& device,
+    const platform::Window& window);
+
 /// Acquire → clear → draw with per-frame view/projection push constants → submit → present.
-/// Composes view_proj = vulkan_Y_flip(projection) * view and pushes 64 bytes (mat4) each frame.
-/// No heap growth, no UBO remap, no pipeline recreate. Skip-frame (minimized) returns true.
+/// Recreates swapchain on OUT_OF_DATE / SUBOPTIMAL / window.framebuffer_resized.
+/// Minimized (framebuffer 0x0): skip frame, return true. No heap growth in the steady path.
 [[nodiscard]] bool renderer_draw_frame(
     RendererState& state,
     const DeviceState& device,
+    platform::Window& window,
     const glm::mat4& view,
     const glm::mat4& projection);
 

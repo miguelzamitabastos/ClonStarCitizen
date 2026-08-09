@@ -17,6 +17,8 @@ struct Window {
     GLFWwindow* handle = nullptr;
     i32         width  = 0;
     i32         height = 0;
+    /// Set by GLFW framebuffer-size callback; cleared by the consumer after handling.
+    bool        framebuffer_resized = false;
 };
 
 [[nodiscard]] bool window_init_subsystem();
@@ -27,5 +29,8 @@ void window_destroy(Window& window);
 
 [[nodiscard]] bool window_should_close(const Window& window);
 void window_poll_events();
+
+/// Refresh `width`/`height` from `glfwGetFramebufferSize` (pixel size for Vulkan).
+void window_query_framebuffer_size(Window& window);
 
 }  // namespace csc::platform

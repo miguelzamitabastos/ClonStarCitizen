@@ -1,5 +1,7 @@
 #include "engine/vulkan/renderer.hpp"
 
+#include "engine/log/log.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cstdio>
@@ -696,32 +698,89 @@ bool create_image_views_and_framebuffers(RendererState& state, VkDevice device)
     return vkEndCommandBuffer(cmd) == VK_SUCCESS;
 }
 
-}  // namespace
+void destroy_swapchain_views_and_framebuffers(RendererState& state, VkDevice device)
+{
+    for (u32 i = 0; i < state.image_count; ++i) {
+        if (state.framebuffers[i] != VK_NULL_HANDLE) {
+            vkDestroyFramebuffer(device, state.framebuffers[i], nullptr);
+            state.framebuffers[i] = VK_NULL_HANDLE;
+        }
+        if (state.image_views[i] != VK_NULL_HANDLE) {
+            vkDestroyImageView(device, state.image_views[i], nullptr);
+            state.image_views[i] = VK_NULL_HANDLE;
+        }
+        state.images[i] = VK_NULL_HANDLE;
+    }
+}
 
-bool renderer_create(
+void destroy_graphics_pipelines_and_layout(RendererState& state, VkDevice device)
+{
+    if (state.grid_pipeline != VK_NULL_HANDLE) {
+        vkDestroyPipeline(device, state.grid_pipeline, nullptr);
+        state.grid_pipeline = VK_NULL_HANDLE;
+    }
+    if (state.pipeline != VK_NULL_HANDLE) {
+        vkDestroyPipeline(device, state.pipeline, nullptr);
+        state.pipeline = VK_NULL_HANDLE;
+    }
+    if (state.pipeline_layout != VK_NULL_HANDLE) {
+        vkDestroyPipelineLayout(device, state.pipeline_layout, nullptr);
+        state.pipeline_layout = VK_NULL_HANDLE;
+    }
+}
+
+void free_command_buffers(RendererState& state, VkDevice device, u32 count)
+{
+    if (state.command_pool == VK_NULL_HANDLE || count == 0) {
+        return;
+    }
+    vkFreeCommandBuffers(device, state.command_pool, count, state.command_buffers);
+    for (u32 i = 0; i < kMaxSwapchainImages; ++i) {
+        state.command_buffers[i] = VK_NULL_HANDLE;
+    }
+}
+
+[[nodiscard]] bool allocate_command_buffers(RendererState& state, VkDevice device)
+{
+    VkCommandBufferAllocateInfo alloc_info{};
+    alloc_info.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    alloc_info.commandPool        = state.command_pool;
+    alloc_info.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    alloc_info.commandBufferCount = state.image_count;
+
+    if (vkAllocateCommandBuffers(device, &alloc_info, state.command_buffers) != VK_SUCCESS) {
+        log::log_error(log::LogCategory::Vulkan, "Failed to allocate command buffers.");
+        return false;
+    }
+    return true;
+}
+
+/// Creates the VkSwapchainKHR and populates images / format / extent / image_count.
+/// Returns false on zero extent or Vulkan failure (caller decides skip vs hard fail).
+[[nodiscard]] bool create_swapchain(
     RendererState& state,
     const DeviceState& device,
     const platform::Window& window,
-    const render::GroundGridDesc& grid)
+    VkSwapchainKHR old_swapchain)
 {
-    state = {};
-
     VkSurfaceCapabilitiesKHR caps{};
     vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device.physical_device, device.surface, &caps);
 
     u32 format_count = 0;
     vkGetPhysicalDeviceSurfaceFormatsKHR(device.physical_device, device.surface, &format_count, nullptr);
     std::vector<VkSurfaceFormatKHR> formats(format_count);
-    vkGetPhysicalDeviceSurfaceFormatsKHR(device.physical_device, device.surface, &format_count, formats.data());
+    vkGetPhysicalDeviceSurfaceFormatsKHR(
+        device.physical_device, device.surface, &format_count, formats.data());
 
     u32 present_count = 0;
-    vkGetPhysicalDeviceSurfacePresentModesKHR(device.physical_device, device.surface, &present_count, nullptr);
+    vkGetPhysicalDeviceSurfacePresentModesKHR(
+        device.physical_device, device.surface, &present_count, nullptr);
     std::vector<VkPresentModeKHR> present_modes(present_count);
     vkGetPhysicalDeviceSurfacePresentModesKHR(
         device.physical_device, device.surface, &present_count, present_modes.data());
 
     if (formats.empty() || present_modes.empty()) {
-        std::fprintf(stderr, "[vulkan] Inadequate swapchain support.\n");
+        log::log_error(log::LogCategory::Vulkan, "Inadequate swapchain support.");
         return false;
     }
 
@@ -730,7 +789,6 @@ bool renderer_create(
     const VkExtent2D extent                 = choose_extent(caps, window);
 
     if (extent.width == 0 || extent.height == 0) {
-        std::fprintf(stderr, "[vulkan] Swapchain extent is zero (minimized?).\n");
         return false;
     }
 
@@ -769,59 +827,78 @@ bool renderer_create(
     swap_info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
     swap_info.presentMode    = present_mode;
     swap_info.clipped        = VK_TRUE;
-    swap_info.oldSwapchain   = VK_NULL_HANDLE;
+    swap_info.oldSwapchain   = old_swapchain;
 
-    if (vkCreateSwapchainKHR(device.device, &swap_info, nullptr, &state.swapchain) != VK_SUCCESS) {
-        std::fprintf(stderr, "[vulkan] vkCreateSwapchainKHR failed.\n");
+    VkSwapchainKHR new_swapchain = VK_NULL_HANDLE;
+    if (vkCreateSwapchainKHR(device.device, &swap_info, nullptr, &new_swapchain) != VK_SUCCESS) {
+        log::log_error(log::LogCategory::Vulkan, "vkCreateSwapchainKHR failed.");
         return false;
     }
 
+    state.swapchain    = new_swapchain;
     state.image_format = surface_format.format;
     state.extent       = extent;
 
     u32 actual_count = 0;
     vkGetSwapchainImagesKHR(device.device, state.swapchain, &actual_count, nullptr);
     if (actual_count == 0 || actual_count > kMaxSwapchainImages) {
-        std::fprintf(stderr, "[vulkan] Unexpected swapchain image count (%u).\n", actual_count);
-        renderer_destroy(state, device);
+        log::log_error(log::LogCategory::Vulkan, "Unexpected swapchain image count (%u).", actual_count);
         return false;
     }
     state.image_count = actual_count;
     vkGetSwapchainImagesKHR(device.device, state.swapchain, &actual_count, state.images);
+    return true;
+}
+
+}  // namespace
+
+bool renderer_create(
+    RendererState& state,
+    const DeviceState& device,
+    const platform::Window& window,
+    const render::GroundGridDesc& grid)
+{
+    state = {};
+
+    if (!create_swapchain(state, device, window, VK_NULL_HANDLE)) {
+        log::log_error(log::LogCategory::Vulkan, "Swapchain create failed (extent zero or unsupported).");
+        return false;
+    }
 
     if (!create_depth_resources(state, device)) {
-        std::fprintf(stderr, "[vulkan] Failed to create depth resources.\n");
+        log::log_error(log::LogCategory::Vulkan, "Failed to create depth resources.");
         renderer_destroy(state, device);
         return false;
     }
 
     if (!create_render_pass(state, device.device)) {
-        std::fprintf(stderr, "[vulkan] Failed to create render pass.\n");
+        log::log_error(log::LogCategory::Vulkan, "Failed to create render pass.");
         renderer_destroy(state, device);
         return false;
     }
 
     if (!create_image_views_and_framebuffers(state, device.device)) {
-        std::fprintf(stderr, "[vulkan] Failed to create image views / framebuffers.\n");
+        log::log_error(log::LogCategory::Vulkan, "Failed to create image views / framebuffers.");
         renderer_destroy(state, device);
         return false;
     }
 
     if (!create_vertex_buffer(state, device)) {
-        std::fprintf(stderr, "[vulkan] Failed to create vertex buffer.\n");
+        log::log_error(log::LogCategory::Vulkan, "Failed to create vertex buffer.");
         renderer_destroy(state, device);
         return false;
     }
 
     if (!create_grid_vertex_buffer(state, device, grid)) {
-        std::fprintf(stderr, "[vulkan] Failed to create ground grid vertex buffer.\n");
+        log::log_error(log::LogCategory::Vulkan, "Failed to create ground grid vertex buffer.");
         renderer_destroy(state, device);
         return false;
     }
 
     if (!create_graphics_pipelines(state, device.device)) {
-        std::fprintf(stderr, "[vulkan] Failed to create graphics pipelines "
-                             "(expect %s/triangle.*.spv).\n",
+        log::log_error(
+            log::LogCategory::Vulkan,
+            "Failed to create graphics pipelines (expect %s/triangle.*.spv).",
             CSC_SHADER_DIR);
         renderer_destroy(state, device);
         return false;
@@ -833,19 +910,12 @@ bool renderer_create(
     pool_info.queueFamilyIndex = device.graphics_queue_family;
 
     if (vkCreateCommandPool(device.device, &pool_info, nullptr, &state.command_pool) != VK_SUCCESS) {
-        std::fprintf(stderr, "[vulkan] Failed to create command pool.\n");
+        log::log_error(log::LogCategory::Vulkan, "Failed to create command pool.");
         renderer_destroy(state, device);
         return false;
     }
 
-    VkCommandBufferAllocateInfo alloc_info{};
-    alloc_info.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    alloc_info.commandPool        = state.command_pool;
-    alloc_info.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    alloc_info.commandBufferCount = state.image_count;
-
-    if (vkAllocateCommandBuffers(device.device, &alloc_info, state.command_buffers) != VK_SUCCESS) {
-        std::fprintf(stderr, "[vulkan] Failed to allocate command buffers.\n");
+    if (!allocate_command_buffers(state, device.device)) {
         renderer_destroy(state, device);
         return false;
     }
@@ -861,13 +931,97 @@ bool renderer_create(
         if (vkCreateSemaphore(device.device, &sem_info, nullptr, &state.image_available[i]) != VK_SUCCESS
             || vkCreateSemaphore(device.device, &sem_info, nullptr, &state.render_finished[i]) != VK_SUCCESS
             || vkCreateFence(device.device, &fence_info, nullptr, &state.in_flight_fences[i]) != VK_SUCCESS) {
-            std::fprintf(stderr, "[vulkan] Failed to create sync objects.\n");
+            log::log_error(log::LogCategory::Vulkan, "Failed to create sync objects.");
             renderer_destroy(state, device);
             return false;
         }
     }
 
     state.current_frame = 0;
+    return true;
+}
+
+bool renderer_recreate_swapchain(
+    RendererState& state,
+    const DeviceState& device,
+    const platform::Window& window)
+{
+    // Minimized / iconified: keep existing swapchain; draw path skips frames.
+    if (window.width <= 0 || window.height <= 0) {
+        return true;
+    }
+
+    vkDeviceWaitIdle(device.device);
+
+    const u32 old_image_count     = state.image_count;
+    const VkFormat old_format     = state.image_format;
+    const VkFormat old_depth_fmt  = state.depth_format;
+    const VkSwapchainKHR old_swap = state.swapchain;
+
+    destroy_swapchain_views_and_framebuffers(state, device.device);
+    destroy_depth_resources(state, device.device);
+
+    state.swapchain = VK_NULL_HANDLE;
+
+    if (!create_swapchain(state, device, window, old_swap)) {
+        log::log_error(log::LogCategory::Vulkan, "Swapchain recreate failed.");
+        if (old_swap != VK_NULL_HANDLE) {
+            vkDestroySwapchainKHR(device.device, old_swap, nullptr);
+        }
+        state.swapchain   = VK_NULL_HANDLE;
+        state.image_count = 0;
+        state.extent      = {0, 0};
+        return false;
+    }
+
+    if (old_swap != VK_NULL_HANDLE) {
+        vkDestroySwapchainKHR(device.device, old_swap, nullptr);
+    }
+
+    if (!create_depth_resources(state, device)) {
+        log::log_error(log::LogCategory::Vulkan, "Failed to recreate depth resources.");
+        return false;
+    }
+
+    const bool format_changed =
+        state.image_format != old_format || state.depth_format != old_depth_fmt;
+    if (format_changed) {
+        // Prefer stable B8G8R8A8_SRGB via choose_surface_format — this path is exceptional.
+        log::log_warn(
+            log::LogCategory::Vulkan,
+            "Swapchain/depth format changed (color %d->%d, depth %d->%d); "
+            "recreating render pass + pipelines.",
+            static_cast<int>(old_format),
+            static_cast<int>(state.image_format),
+            static_cast<int>(old_depth_fmt),
+            static_cast<int>(state.depth_format));
+
+        destroy_graphics_pipelines_and_layout(state, device.device);
+        if (state.render_pass != VK_NULL_HANDLE) {
+            vkDestroyRenderPass(device.device, state.render_pass, nullptr);
+            state.render_pass = VK_NULL_HANDLE;
+        }
+        if (!create_render_pass(state, device.device)
+            || !create_graphics_pipelines(state, device.device)) {
+            log::log_error(
+                log::LogCategory::Vulkan,
+                "Failed to recreate render pass / pipelines after format change.");
+            return false;
+        }
+    }
+
+    if (!create_image_views_and_framebuffers(state, device.device)) {
+        log::log_error(log::LogCategory::Vulkan, "Failed to recreate image views / framebuffers.");
+        return false;
+    }
+
+    if (state.image_count != old_image_count) {
+        free_command_buffers(state, device.device, old_image_count);
+        if (!allocate_command_buffers(state, device.device)) {
+            return false;
+        }
+    }
+
     return true;
 }
 
@@ -945,11 +1099,25 @@ void renderer_destroy(RendererState& state, const DeviceState& device)
 bool renderer_draw_frame(
     RendererState& state,
     const DeviceState& device,
+    platform::Window& window,
     const glm::mat4& view,
     const glm::mat4& projection)
 {
-    if (state.extent.width == 0 || state.extent.height == 0) {
+    platform::window_query_framebuffer_size(window);
+
+    // Minimized: skip frame without touching the GPU present path.
+    if (window.width <= 0 || window.height <= 0) {
         return true;
+    }
+
+    if (window.framebuffer_resized) {
+        if (!renderer_recreate_swapchain(state, device, window)) {
+            return false;
+        }
+        window.framebuffer_resized = false;
+        if (state.extent.width == 0 || state.extent.height == 0) {
+            return true;
+        }
     }
 
     const u32 frame = state.current_frame;
@@ -966,11 +1134,16 @@ bool renderer_draw_frame(
         &image_index);
 
     if (acquire == VK_ERROR_OUT_OF_DATE_KHR) {
-        // Fixed-size window path: skip frame rather than crash; full recreate is a later milestone.
-        return true;
+        window.framebuffer_resized = false;
+        return renderer_recreate_swapchain(state, device, window);
     }
-    if (acquire != VK_SUCCESS && acquire != VK_SUBOPTIMAL_KHR) {
-        std::fprintf(stderr, "[vulkan] vkAcquireNextImageKHR failed (%d).\n", static_cast<int>(acquire));
+    if (acquire == VK_SUBOPTIMAL_KHR) {
+        // Continue this frame; recreate after present for a cleaner transition.
+    } else if (acquire != VK_SUCCESS) {
+        log::log_error(
+            log::LogCategory::Vulkan,
+            "vkAcquireNextImageKHR failed (%d).",
+            static_cast<int>(acquire));
         return false;
     }
 
@@ -981,7 +1154,7 @@ bool renderer_draw_frame(
         vulkan_clip_projection(projection) * view,
     };
     if (!record_draw_commands(state, image_index, push)) {
-        std::fprintf(stderr, "[vulkan] Failed to record draw commands.\n");
+        log::log_error(log::LogCategory::Vulkan, "Failed to record draw commands.");
         return false;
     }
 
@@ -998,7 +1171,7 @@ bool renderer_draw_frame(
     submit.pSignalSemaphores    = &state.render_finished[frame];
 
     if (vkQueueSubmit(device.graphics_queue, 1, &submit, state.in_flight_fences[frame]) != VK_SUCCESS) {
-        std::fprintf(stderr, "[vulkan] vkQueueSubmit failed.\n");
+        log::log_error(log::LogCategory::Vulkan, "vkQueueSubmit failed.");
         return false;
     }
 
@@ -1011,11 +1184,17 @@ bool renderer_draw_frame(
     present.pImageIndices      = &image_index;
 
     const VkResult present_result = vkQueuePresentKHR(device.present_queue, &present);
-    if (present_result == VK_ERROR_OUT_OF_DATE_KHR || present_result == VK_SUBOPTIMAL_KHR) {
-        return true;
-    }
-    if (present_result != VK_SUCCESS) {
-        std::fprintf(stderr, "[vulkan] vkQueuePresentKHR failed (%d).\n", static_cast<int>(present_result));
+    if (present_result == VK_ERROR_OUT_OF_DATE_KHR || present_result == VK_SUBOPTIMAL_KHR
+        || window.framebuffer_resized) {
+        window.framebuffer_resized = false;
+        if (!renderer_recreate_swapchain(state, device, window)) {
+            return false;
+        }
+    } else if (present_result != VK_SUCCESS) {
+        log::log_error(
+            log::LogCategory::Vulkan,
+            "vkQueuePresentKHR failed (%d).",
+            static_cast<int>(present_result));
         return false;
     }
 

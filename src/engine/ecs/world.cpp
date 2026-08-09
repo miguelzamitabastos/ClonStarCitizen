@@ -1,16 +1,11 @@
 #include "engine/ecs/world.hpp"
 
-#define GLFW_INCLUDE_NONE
-#include <GLFW/glfw3.h>
-
 #include <algorithm>
 #include <cmath>
 
 namespace csc::ecs {
 namespace {
 
-constexpr float kMoveSpeedUnitsPerSec = 5.f;
-constexpr float kMouseSensitivity = 0.0025f; // radians per pixel
 constexpr float kPitchLimit = 1.55334306f;   // ~89 deg
 
 [[nodiscard]] glm::vec3 forward_from_yaw_pitch(float yaw, float pitch)
@@ -46,27 +41,23 @@ void world_register_systems(flecs::world& world)
     world.system<Camera3D>("CameraControlSystem")
         .kind(camera_control_phase)
         .each([](flecs::iter& it, size_t /*index*/, Camera3D& cam) {
-            CameraInputContext* ctx = it.world().try_get_mut<CameraInputContext>();
-            if (ctx == nullptr || ctx->window == nullptr) {
+            const InputActions* actions = it.world().try_get<InputActions>();
+            if (actions == nullptr) {
                 return;
             }
 
-            GLFWwindow* win = ctx->window;
+            const CameraControlParams* params = it.world().try_get<CameraControlParams>();
+            const f32 move_speed = (params != nullptr) ? params->move_speed : 8.0f;
+            const f32 look_sens  = (params != nullptr) ? params->mouse_sensitivity : 0.0025f;
+
+            const input::ActionState& in = actions->state;
             const f32 dt = it.delta_time();
 
-            double cursor_x = 0.0;
-            double cursor_y = 0.0;
-            glfwGetCursorPos(win, &cursor_x, &cursor_y);
-            if (ctx->has_last_cursor) {
-                const float dx = static_cast<float>(cursor_x - ctx->last_cursor_x);
-                const float dy = static_cast<float>(cursor_y - ctx->last_cursor_y);
-                cam.yaw += dx * kMouseSensitivity;
-                cam.pitch -= dy * kMouseSensitivity;
-                cam.pitch = std::clamp(cam.pitch, -kPitchLimit, kPitchLimit);
-            }
-            ctx->last_cursor_x = cursor_x;
-            ctx->last_cursor_y = cursor_y;
-            ctx->has_last_cursor = true;
+            const f32 look_x = in.axes[static_cast<u16>(input::ActionAxis::LookX)];
+            const f32 look_y = in.axes[static_cast<u16>(input::ActionAxis::LookY)];
+            cam.yaw += look_x * look_sens;
+            cam.pitch -= look_y * look_sens;
+            cam.pitch = std::clamp(cam.pitch, -kPitchLimit, kPitchLimit);
 
             const glm::vec3 forward = forward_from_yaw_pitch(cam.yaw, cam.pitch);
             const glm::vec3 world_up{0.f, 1.f, 0.f};
@@ -78,32 +69,22 @@ void world_register_systems(flecs::world& world)
                 right = glm::vec3{1.f, 0.f, 0.f};
             }
 
-            // FPS-style: WASD along look-relative axes; Space/E up, Ctrl/Q down.
-            glm::vec3 move{0.f, 0.f, 0.f};
-            if (glfwGetKey(win, GLFW_KEY_W) == GLFW_PRESS) {
-                move += forward;
-            }
-            if (glfwGetKey(win, GLFW_KEY_S) == GLFW_PRESS) {
-                move -= forward;
-            }
-            if (glfwGetKey(win, GLFW_KEY_D) == GLFW_PRESS) {
-                move += right;
-            }
-            if (glfwGetKey(win, GLFW_KEY_A) == GLFW_PRESS) {
-                move -= right;
-            }
-            if (glfwGetKey(win, GLFW_KEY_SPACE) == GLFW_PRESS ||
-                glfwGetKey(win, GLFW_KEY_E) == GLFW_PRESS) {
-                move += world_up;
-            }
-            if (glfwGetKey(win, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS ||
-                glfwGetKey(win, GLFW_KEY_Q) == GLFW_PRESS) {
-                move -= world_up;
+            // Axes from InputSystem: MoveX=straferight, MoveY=up, MoveZ=forward.
+            const f32 axis_x = in.axes[static_cast<u16>(input::ActionAxis::MoveX)];
+            const f32 axis_y = in.axes[static_cast<u16>(input::ActionAxis::MoveY)];
+            const f32 axis_z = in.axes[static_cast<u16>(input::ActionAxis::MoveZ)];
+
+            glm::vec3 move = forward * axis_z + right * axis_x + world_up * axis_y;
+
+            // Optional thrust boost (logical action — not a raw key).
+            f32 speed = move_speed;
+            if (in.pressed[static_cast<u16>(input::Action::Thrust)]) {
+                speed *= 2.f;
             }
 
             const float move_len2 = glm::dot(move, move);
             if (move_len2 > 1e-8f) {
-                move *= (kMoveSpeedUnitsPerSec * dt) / std::sqrt(move_len2);
+                move *= (speed * dt) / std::sqrt(move_len2);
                 cam.eye += move;
             }
 
@@ -120,19 +101,10 @@ void world_register_systems(flecs::world& world)
         });
 }
 
-void world_bind_camera_input(flecs::world& world, GLFWwindow* window)
+void world_bind_camera_input(flecs::world& world, const CameraControlParams& params)
 {
-    CameraInputContext ctx{};
-    ctx.window = window;
-    ctx.has_last_cursor = false;
-    world.set<CameraInputContext>(ctx);
-
-    if (window != nullptr) {
-        glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-        if (glfwRawMouseMotionSupported() == GLFW_TRUE) {
-            glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
-        }
-    }
+    world.set<CameraControlParams>(params);
+    world.set<InputActions>(InputActions{});
 }
 
 void world_spawn_demo_entities(flecs::world& world, int count)
@@ -175,6 +147,18 @@ bool world_try_get_primary_camera(const flecs::world& world, Camera3D& out)
         found = true;
     });
     return found;
+}
+
+void world_set_primary_camera_aspect(flecs::world& world, float aspect)
+{
+    bool updated = false;
+    world.each([&](Camera3D& cam) {
+        if (updated) {
+            return;
+        }
+        cam.aspect = aspect;
+        updated    = true;
+    });
 }
 
 bool world_try_get_primary_grid(const flecs::world& world, Grid3D& out)

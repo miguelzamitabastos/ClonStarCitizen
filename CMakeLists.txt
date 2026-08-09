@@ -79,12 +79,22 @@ add_custom_target(clon_shaders ALL DEPENDS ${SHADER_SPV_FILES})
 # --- Engine sources ---------------------------------------------------------
 set(ENGINE_SOURCES
     src/main.cpp
+    src/engine/config/config.cpp
+    src/engine/log/log.cpp
     src/engine/memory/arena.cpp
+    src/engine/input/input.cpp
     src/engine/ecs/world.cpp
     src/engine/platform/window.cpp
     src/engine/vulkan/instance.cpp
     src/engine/vulkan/device.cpp
     src/engine/vulkan/renderer.cpp
+    src/game/flight/flight.cpp
+    src/game/character/character.cpp
+    src/game/economy/economy.cpp
+    src/game/world/world.cpp
+    src/game/ui/ui.cpp
+    src/game/audio/audio.cpp
+    src/game/save/save.cpp
 )
 
 add_executable(clon_star_citizen ${ENGINE_SOURCES})

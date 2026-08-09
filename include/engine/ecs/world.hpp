@@ -1,14 +1,13 @@
 #pragma once
 
 #include "engine/core/types.hpp"
+#include "engine/input/actions.hpp"
 #include "engine/math/glm.hpp"
 #include "engine/render/grid.hpp"
 
 #include <flecs.h>
 
 #include <cstddef>
-
-struct GLFWwindow;
 
 namespace csc::ecs {
 
@@ -49,19 +48,22 @@ struct Camera3D {
     glm::mat4 projection{1.f};
 };
 
-/// Singleton: GLFW window + mouse tracking for CameraControlSystem (set at init).
-struct CameraInputContext {
-    GLFWwindow* window = nullptr;
-    double last_cursor_x = 0.0;
-    double last_cursor_y = 0.0;
-    bool has_last_cursor = false;
+/// Flecs singleton: logical action snapshot polled once per frame in main.
+struct InputActions {
+    input::ActionState state{};
+};
+
+/// Flecs singleton: camera move/look tunables from AppConfig (set at init).
+struct CameraControlParams {
+    f32 move_speed        = 8.0f;
+    f32 mouse_sensitivity = 0.0025f;
 };
 
 /// Register gameplay systems (call once at init).
 void world_register_systems(flecs::world& world);
 
-/// Bind GLFW window for free-look input; disables cursor. Call after window_create.
-void world_bind_camera_input(flecs::world& world, GLFWwindow* window);
+/// Set camera tunables and ensure InputActions singleton exists. Cursor disable is in input_init.
+void world_bind_camera_input(flecs::world& world, const CameraControlParams& params);
 
 /// Pre-create demo entities at level load (not in the frame loop).
 void world_spawn_demo_entities(flecs::world& world, int count = 3);
@@ -74,6 +76,10 @@ void world_spawn_default_grid(flecs::world& world);
 
 /// Copy the first Camera3D found into `out`. Returns false if none exist.
 [[nodiscard]] bool world_try_get_primary_camera(const flecs::world& world, Camera3D& out);
+
+/// Update aspect on the first Camera3D (call when the framebuffer size changes).
+/// Projection is recomputed by UpdateCameraMatrices on the next world_progress.
+void world_set_primary_camera_aspect(flecs::world& world, float aspect);
 
 /// Copy the first Grid3D found into `out`. Returns false if none exist.
 [[nodiscard]] bool world_try_get_primary_grid(const flecs::world& world, Grid3D& out);
