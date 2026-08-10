@@ -217,8 +217,8 @@ void update_chase_camera(flecs::world& world)
     glm::vec3 ship_pos{0.f};
     glm::quat ship_ori{1.f, 0.f, 0.f, 0.f};
 
-    world.each([&](flecs::entity e, const RigidBody6DOF& rb, const PlayerShip&) {
-        if (ship_found || e.has<Destroyed>()) {
+    world.each([&](flecs::entity e, const RigidBody6DOF& rb) {
+        if (ship_found || !e.has<PlayerShip>() || e.has<Destroyed>()) {
             return;
         }
         const ecs::Position*         p    = e.try_get<ecs::Position>();
@@ -320,6 +320,9 @@ void try_fire_mount(
         return;
     }
     for (u32 pi = 0; pi < pool->count; ++pi) {
+        if (pool->entities[pi] == 0) {
+            continue;
+        }
         flecs::entity pe = world.entity(pool->entities[pi]);
         if (!pe.is_alive()) {
             continue;
@@ -404,6 +407,9 @@ void step_projectiles(
     });
 
     for (u32 i = 0; i < deactivate_count; ++i) {
+        if (to_deactivate[i] == 0) {
+            continue;
+        }
         flecs::entity e = world.entity(to_deactivate[i]);
         if (e.is_alive() && e.has<ecs::InstanceTag>()) {
             e.remove<ecs::InstanceTag>();
@@ -423,6 +429,9 @@ void apply_damage_events(flecs::world& world)
 
     combat::DamageEvent ev{};
     while (q->try_pop(ev)) {
+        if (ev.target == 0) {
+            continue;
+        }
         flecs::entity target = world.entity(ev.target);
         if (!target.is_alive() || target.has<Destroyed>()) {
             continue;
@@ -446,6 +455,9 @@ void apply_damage_events(flecs::world& world)
     }
 
     for (u32 i = 0; i < destroyed_count; ++i) {
+        if (newly_destroyed[i] == 0) {
+            continue;
+        }
         flecs::entity e = world.entity(newly_destroyed[i]);
         if (e.is_alive() && !e.has<Destroyed>()) {
             e.add<Destroyed>();
@@ -458,7 +470,10 @@ void cleanup_destroyed(flecs::world& world)
     flecs::entity_t strip[kMaxHullTargets]{};
     u32             strip_count = 0;
 
-    world.each([&](flecs::entity e, Destroyed, RigidBody6DOF& rb) {
+    world.each([&](flecs::entity e, RigidBody6DOF& rb) {
+        if (!e.has<Destroyed>()) {
+            return;
+        }
         rb.linear_vel  = glm::vec3{0.f};
         rb.angular_vel = glm::vec3{0.f};
         if (ecs::Velocity* v = e.try_get_mut<ecs::Velocity>()) {
@@ -475,7 +490,10 @@ void cleanup_destroyed(flecs::world& world)
     });
 
     // Also strip InstanceTag from destroyed hulls without RigidBody (static targets).
-    world.each([&](flecs::entity e, Destroyed, ShipHull&) {
+    world.each([&](flecs::entity e, ShipHull&) {
+        if (!e.has<Destroyed>()) {
+            return;
+        }
         if (e.has<ecs::InstanceTag>() && strip_count < kMaxHullTargets) {
             // Avoid duplicates
             bool dup = false;
@@ -492,6 +510,9 @@ void cleanup_destroyed(flecs::world& world)
     });
 
     for (u32 i = 0; i < strip_count; ++i) {
+        if (strip[i] == 0) {
+            continue;
+        }
         flecs::entity e = world.entity(strip[i]);
         if (e.is_alive() && e.has<ecs::InstanceTag>()) {
             e.remove<ecs::InstanceTag>();
@@ -609,7 +630,10 @@ void fixed_step(flecs::world& world, f32 dt)
         : kLookTorqueScale;
 
     if (actions != nullptr) {
-        world.each([&](flecs::entity e, FlightControl& ctrl, const PlayerShip&) {
+        world.each([&](flecs::entity e, FlightControl& ctrl) {
+            if (!e.has<PlayerShip>()) {
+                return;
+            }
             if (e.has<Destroyed>()) {
                 ctrl.thrust_input = {};
                 ctrl.torque_input = {};
@@ -846,14 +870,13 @@ void fill_player_telemetry(
     hull_max_hp     = 0.f;
     coupled         = false;
 
-    world.each([&](flecs::entity /*e*/,
+    world.each([&](flecs::entity e,
                    const RigidBody6DOF& rb,
                    const PowerPlant& plant,
                    const ShieldGenerator& shield,
                    const ShipHull& hull,
-                   const FlightControl& ctrl,
-                   const PlayerShip&) {
-        if (found) {
+                   const FlightControl& ctrl) {
+        if (found || !e.has<PlayerShip>()) {
             return;
         }
         found           = true;
