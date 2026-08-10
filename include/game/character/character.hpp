@@ -116,6 +116,37 @@ struct ItemPickup {
 [[nodiscard]] bool inventory_remove(Inventory& inv, u32 item_id, u32 qty);
 [[nodiscard]] u32  inventory_count(const Inventory& inv, u32 item_id);
 
+// --- P2-06: on-foot combat AI (actuation over the SHARED ai::AiAgent) ----------
+
+inline constexpr u32 kMaxPatrolPoints = 4;
+inline constexpr u32 kMaxCoverPoints  = 16;
+
+/// Actuation tunables + per-tick wish for a hostile NPC. The DECISION
+/// (state/target) lives in ai::AiAgent (P2-11); this component only drives
+/// locomotion + trigger pulls. `move_wish` is written by the NPC actuation
+/// pass and consumed by the shared locomotion step (same path as the player).
+struct NpcCombatant {
+    f32 move_speed      = 3.2f;
+    f32 preferred_range = 14.f; ///< advance until this close in Combat
+    f32 fire_range      = 45.f;
+    f32 accuracy        = 0.65f; ///< hit probability per shot (CombatRng roll)
+    f32 cover_health_fraction = 0.6f; ///< below this, fight from cover
+    glm::vec3 move_wish{0.f};        ///< runtime: unit ground-plane wish dir
+};
+
+/// Fixed waypoint loop walked while the shared FSM is in Patrol.
+struct PatrolRoute {
+    glm::vec3 points[kMaxPatrolPoints]{};
+    u32       count   = 0;
+    u32       current = 0;
+};
+
+/// Cover spot NPCs run to when hurt (P2-06). Non-empty on purpose: flecs
+/// registers empty structs as tags, which cannot be fetched by value in each().
+struct CoverPoint {
+    f32 arrive_radius = 0.8f;
+};
+
 enum class GravityZoneShape : u8 {
     Box    = 0,
     Sphere = 1,
@@ -266,6 +297,19 @@ void fixed_step(flecs::world& world, f32 dt);
     const glm::vec3& position,
     u32              item_id,
     u32              qty);
+
+/// P2-06: hostile on-foot NPC. Decision comes from the SHARED ai::AiAgent
+/// (P2-11); this entity only actuates locomotion + trigger pulls.
+[[nodiscard]] flecs::entity spawn_npc_combatant(
+    flecs::world&      world,
+    const glm::vec3&   position,
+    u32                faction_id,
+    const PatrolRoute& route,
+    const char*        name = "HostileNpc");
+
+/// P2-06: cover spot hurt NPCs run to while fighting.
+[[nodiscard]] flecs::entity spawn_cover_point(
+    flecs::world& world, const glm::vec3& position);
 
 /// P2-05: HUD snapshot of the player's inventory (fixed buffers, no heap).
 struct InventoryTelemetry {

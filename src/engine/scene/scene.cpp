@@ -154,11 +154,43 @@ bool setup_on_foot_test(SceneContext& ctx)
         game::character::kItemPistol,
         1u);
 
+    // P2-06: hostile pirate NPCs patrolling the station pad + cover crates.
+    {
+        game::character::PatrolRoute route{};
+        route.points[0] = glm::vec3{kStationCenter.x + 7.f, 0.9f, kStationCenter.z + 6.f};
+        route.points[1] = glm::vec3{kStationCenter.x + 7.f, 0.9f, kStationCenter.z - 6.f};
+        route.points[2] = glm::vec3{kStationCenter.x - 2.f, 0.9f, kStationCenter.z - 6.f};
+        route.count     = 3;
+        (void)game::character::spawn_npc_combatant(
+            *ctx.world,
+            route.points[0],
+            game::ai::kPirateFaction,
+            route,
+            "PirateGrunt");
+
+        game::character::PatrolRoute route2{};
+        route2.points[0] = glm::vec3{kStationCenter.x - 8.f, 0.9f, kStationCenter.z - 4.f};
+        route2.points[1] = glm::vec3{kStationCenter.x - 8.f, 0.9f, kStationCenter.z + 6.f};
+        route2.count     = 2;
+        (void)game::character::spawn_npc_combatant(
+            *ctx.world,
+            route2.points[0],
+            game::ai::kPirateFaction,
+            route2,
+            "PirateGrunt2");
+
+        (void)game::character::spawn_cover_point(
+            *ctx.world, glm::vec3{kStationCenter.x + 3.f, 0.9f, kStationCenter.z + 5.f});
+        (void)game::character::spawn_cover_point(
+            *ctx.world, glm::vec3{kStationCenter.x - 4.f, 0.9f, kStationCenter.z - 5.f});
+    }
+
     ctx.world->set<ecs::ControlMode>({ecs::ControlModeKind::OnFoot});
 
     ctx.needs_shared_mesh = true;
-    // ship + player + hatch + seat + deck + terminal + target + 3 pickups + projectiles
-    ctx.instance_count = 10u + static_cast<u32>(game::flight::kProjectilePoolSize);
+    // ship + player + hatch + seat + deck + terminal + target + 3 pickups
+    // + 2 NPCs + 2 cover crates + projectiles
+    ctx.instance_count = 14u + static_cast<u32>(game::flight::kProjectilePoolSize);
     return true;
 }
 
@@ -236,6 +268,77 @@ bool setup_crew_turret_test(SceneContext& ctx)
         log::LogCategory::Game,
         "crew_turret_test: pirate turret vs crewed player ship | subsystem HUD | "
         "engineer repairs | turret seat via [F]");
+    return true;
+}
+
+bool setup_npc_combat_test(SceneContext& ctx)
+{
+    if (ctx.world == nullptr) {
+        return false;
+    }
+
+    ecs::world_spawn_default_camera(*ctx.world, ctx.aspect);
+    ecs::world_spawn_default_grid(*ctx.world);
+
+    // Ground gravity over the whole arena (player + NPCs walk, no EVA).
+    (void)game::character::spawn_gravity_zone_box(
+        *ctx.world,
+        glm::vec3{0.f, 2.f, 0.f},
+        glm::vec3{40.f, 6.f, 40.f},
+        glm::vec3{0.f, -1.f, 0.f},
+        game::character::kGravityDefault,
+        "ArenaGravity");
+
+    // Deck marker sunk so only its top face reads as the arena floor.
+    {
+        const ecs::Position pos{0.f, -5.f, -10.f};
+        ctx.world->entity("ArenaDeck")
+            .set<ecs::Position>(pos)
+            .set<ecs::PreviousPosition>({pos.x, pos.y, pos.z})
+            .set<ecs::Velocity>({0.f, 0.f, 0.f})
+            .set<ecs::Scale>({10.f})
+            .add<ecs::InstanceTag>();
+    }
+
+    // Player on foot, world space, looking down -Z at the pirates.
+    (void)game::character::spawn_player_character(
+        *ctx.world, glm::vec3{0.f, 0.9f, 8.f}, 0);
+
+    // P2-06: two pirate grunts patrolling ahead + cover crates between them.
+    {
+        game::character::PatrolRoute route{};
+        route.points[0] = glm::vec3{6.f, 0.9f, -14.f};
+        route.points[1] = glm::vec3{-6.f, 0.9f, -14.f};
+        route.count     = 2;
+        (void)game::character::spawn_npc_combatant(
+            *ctx.world, route.points[0], game::ai::kPirateFaction, route, "PirateGrunt");
+
+        game::character::PatrolRoute route2{};
+        route2.points[0] = glm::vec3{-10.f, 0.9f, -20.f};
+        route2.points[1] = glm::vec3{10.f, 0.9f, -20.f};
+        route2.count     = 2;
+        (void)game::character::spawn_npc_combatant(
+            *ctx.world, route2.points[0], game::ai::kPirateFaction, route2,
+            "PirateGrunt2");
+
+        (void)game::character::spawn_cover_point(*ctx.world, glm::vec3{4.f, 0.9f, -18.f});
+        (void)game::character::spawn_cover_point(*ctx.world, glm::vec3{-4.f, 0.9f, -18.f});
+    }
+
+    // Ammo on the floor for the fight.
+    (void)game::character::spawn_item_pickup(
+        *ctx.world, glm::vec3{2.f, 0.9f, 5.f}, game::character::kItemAmmoPack, 2u);
+
+    ctx.world->set<ecs::ControlMode>({ecs::ControlModeKind::OnFoot});
+
+    ctx.needs_shared_mesh = true;
+    // deck + player + 2 NPCs + 2 cover crates + pickup
+    ctx.instance_count = 7u;
+
+    log::log_info(
+        log::LogCategory::Game,
+        "npc_combat_test: 2 pirate grunts (shared AI FSM) patrol → detect → combat | "
+        "cover crates when hurt | flee at low HP");
     return true;
 }
 
@@ -467,6 +570,9 @@ constexpr SceneDesc kScenes[] = {
     {"crew_turret_test",
      "NPC crew + AI turrets + subsystem damage (P2-01/02/03)",
      &setup_crew_turret_test},
+    {"npc_combat_test",
+     "On-foot pirates: patrol/alert/combat/cover/flee via shared AI (P2-06)",
+     &setup_npc_combat_test},
     {"economy_test",
      "Buy ore@A → travel B → sell margin + delivery mission (P1C)",
      &setup_economy_test},

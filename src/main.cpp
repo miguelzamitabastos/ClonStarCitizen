@@ -439,6 +439,15 @@ int main(int argc, char** argv)
         game::world::fill_world_telemetry(world, ui_stats.rebase_count, world_found);
         (void)world_found;
 
+        game::ai::AiTelemetry ai_stats{};
+        game::ai::fill_ai_telemetry(world, ai_stats);
+        ui_stats.has_ai_telemetry =
+            (ai_stats.patrol + ai_stats.alert + ai_stats.combat + ai_stats.flee) > 0;
+        ui_stats.ai_patrol = ai_stats.patrol;
+        ui_stats.ai_alert  = ai_stats.alert;
+        ui_stats.ai_combat = ai_stats.combat;
+        ui_stats.ai_flee   = ai_stats.flee;
+
         debug::DebugUiState* ui_ptr = debug_ui.ready ? &debug_ui : nullptr;
         if (ui_ptr != nullptr) {
             debug::debug_ui_begin_frame(debug_ui);

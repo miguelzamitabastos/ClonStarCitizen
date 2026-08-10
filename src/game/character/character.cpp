@@ -4,6 +4,7 @@
 
 #include "engine/ecs/world.hpp"
 #include "engine/log/log.hpp"
+#include "game/ai/ai.hpp"
 #include "game/economy/economy.hpp"
 #include "game/flight/flight.hpp"
 #include "game/save/save.hpp"
@@ -521,6 +522,173 @@ void handle_interact_events(flecs::world& world)
     }
 }
 
+// --- P2-06: on-foot combat AI actuation ---------------------------------------
+//
+// ai::fixed_step (P2-11) already ran this tick and refreshed AiAgent.state /
+// AiAgent.target. This pass converts that decision into a ground-plane
+// `move_wish` (consumed by the shared step_locomotion) and trigger pulls.
+
+struct CoverSpot {
+    glm::vec3 position{0.f};
+    f32       arrive_radius = 0.8f;
+};
+
+u32 collect_cover_points(flecs::world& world, CoverSpot* out, u32 capacity)
+{
+    u32 n = 0;
+    world.each([&](const CoverPoint& cp, const ecs::Position& p) {
+        if (n >= capacity) {
+            return;
+        }
+        out[n].position      = glm::vec3{p.x, p.y, p.z};
+        out[n].arrive_radius = cp.arrive_radius;
+        ++n;
+    });
+    return n;
+}
+
+[[nodiscard]] bool try_get_target_pos(
+    flecs::world& world, flecs::entity_t id, glm::vec3& out)
+{
+    if (id == 0) {
+        return false;
+    }
+    flecs::entity t = world.entity(id);
+    if (!t.is_alive() || t.has<CharacterDead>() || t.has<flight::Destroyed>()) {
+        return false;
+    }
+    if (const flight::RigidBody6DOF* rb = t.try_get<flight::RigidBody6DOF>()) {
+        out = rb->position;
+        return true;
+    }
+    if (const ecs::Position* p = t.try_get<ecs::Position>()) {
+        out = glm::vec3{p->x, p->y, p->z};
+        return true;
+    }
+    return false;
+}
+
+/// Ground-plane (XZ) direction from `from` to `to`; false when on top of it.
+[[nodiscard]] bool flat_dir_to(
+    const glm::vec3& from, const glm::vec3& to, f32 arrive_radius, glm::vec3& out_dir)
+{
+    glm::vec3 d = to - from;
+    d.y         = 0.f;
+    const f32 len2 = glm::dot(d, d);
+    if (len2 <= arrive_radius * arrive_radius) {
+        return false;
+    }
+    out_dir = d * (1.f / std::sqrt(len2));
+    return true;
+}
+
+/// Yaw so that forward_from_yaw_pitch(yaw, 0) points along `dir` (XZ).
+[[nodiscard]] f32 yaw_from_dir(const glm::vec3& dir)
+{
+    return std::atan2(dir.z, dir.x);
+}
+
+void step_npc_combat(flecs::world& world, f32 dt)
+{
+    (void)dt; // cooldown ticking lives in step_fps_combat (all EquippedItem)
+
+    CoverSpot cover[kMaxCoverPoints]{};
+    const u32 cover_count = collect_cover_points(world, cover, kMaxCoverPoints);
+
+    combat::DamageEventQueue* dmg_q = world.try_get_mut<combat::DamageEventQueue>();
+    combat::CombatRng*        rng   = world.try_get_mut<combat::CombatRng>();
+
+    world.each([&](flecs::entity e, NpcCombatant& npc, CharacterController& cc,
+                   const ecs::Position& p, const Health& hp, EquippedItem& gun) {
+        npc.move_wish = glm::vec3{0.f};
+        if (e.has<CharacterDead>()) {
+            return;
+        }
+        const ai::AiAgent* agent = e.try_get<ai::AiAgent>();
+        if (agent == nullptr) {
+            return;
+        }
+
+        const glm::vec3 self_pos{p.x, p.y, p.z};
+        glm::vec3       target_pos{0.f};
+        const bool      target_ok = try_get_target_pos(world, agent->target, target_pos);
+        const f32       target_dist =
+            target_ok ? glm::length(target_pos - self_pos) : 1e9f;
+
+        glm::vec3 dir{0.f};
+        switch (agent->state) {
+        case ai::AiState::Patrol: {
+            PatrolRoute* route = e.try_get_mut<PatrolRoute>();
+            if (route == nullptr || route->count == 0) {
+                break;
+            }
+            const glm::vec3 waypoint = route->points[route->current % route->count];
+            if (flat_dir_to(self_pos, waypoint, 1.2f, dir)) {
+                npc.move_wish = dir;
+                cc.yaw        = yaw_from_dir(dir);
+            } else {
+                route->current = (route->current + 1u) % route->count;
+            }
+            break;
+        }
+        case ai::AiState::Alert:
+            // Hold position, face the threat while the alert dwell runs.
+            if (target_ok && flat_dir_to(self_pos, target_pos, 0.1f, dir)) {
+                cc.yaw = yaw_from_dir(dir);
+            }
+            break;
+        case ai::AiState::Combat: {
+            if (target_ok && flat_dir_to(self_pos, target_pos, 0.1f, dir)) {
+                cc.yaw = yaw_from_dir(dir);
+            }
+
+            // Hurt → fight from the nearest cover point instead of advancing.
+            const f32 hp_frac = (hp.max_hp > 1e-3f) ? hp.hp / hp.max_hp : 0.f;
+            if (hp_frac < npc.cover_health_fraction && cover_count > 0) {
+                u32 best   = 0;
+                f32 best_d = 1e9f;
+                for (u32 i = 0; i < cover_count; ++i) {
+                    const f32 d = glm::length(cover[i].position - self_pos);
+                    if (d < best_d) {
+                        best_d = d;
+                        best   = i;
+                    }
+                }
+                glm::vec3 to_cover{0.f};
+                if (flat_dir_to(
+                        self_pos, cover[best].position, cover[best].arrive_radius,
+                        to_cover)) {
+                    npc.move_wish = to_cover;
+                }
+            } else if (target_ok && target_dist > npc.preferred_range) {
+                npc.move_wish = dir; // advance until preferred range
+            }
+
+            // Trigger pull: cadence from EquippedItem, hit roll from CombatRng.
+            if (target_ok && target_dist <= npc.fire_range
+                && gun.cooldown_remaining <= 0.f && dmg_q != nullptr
+                && rng != nullptr) {
+                gun.cooldown_remaining = gun.fire_cooldown;
+                const f32 roll =
+                    static_cast<f32>(combat::rng_next(rng->state) >> 8)
+                    * (1.f / 16777216.f);
+                if (roll < npc.accuracy) {
+                    (void)dmg_q->push(
+                        combat::DamageEvent{agent->target, e.id(), gun.damage});
+                }
+            }
+            break;
+        }
+        case ai::AiState::Flee:
+            if (target_ok && flat_dir_to(target_pos, self_pos, 0.1f, dir)) {
+                npc.move_wish = dir; // run away from the threat
+                cc.yaw        = yaw_from_dir(dir);
+            }
+            break;
+        }
+    });
+}
+
 void step_locomotion(flecs::world& world, f32 dt, const input::ActionState* actions)
 {
     const ecs::ControlMode* mode = world.try_get<ecs::ControlMode>();
@@ -577,6 +745,12 @@ void step_locomotion(flecs::world& world, f32 dt, const input::ActionState* acti
         const bool eva = !grav.in_zone || grav.magnitude < 0.05f;
 
         glm::vec3 wish{0.f};
+        if (!driven) {
+            // P2-06: NPC actuation feeds the same locomotion path as the player.
+            if (const NpcCombatant* npc = e.try_get<NpcCombatant>()) {
+                wish = npc->move_wish;
+            }
+        }
         if (driven) {
             const f32 ax = actions->axes[static_cast<u16>(input::ActionAxis::MoveX)];
             const f32 ay = actions->axes[static_cast<u16>(input::ActionAxis::MoveY)];
@@ -864,6 +1038,7 @@ void fixed_step(flecs::world& world, f32 dt)
         log::log_info(log::LogCategory::Core, "Turret seat: → OnFoot");
     }
 
+    step_npc_combat(world, dt); // P2-06: AiAgent decision → wish + trigger
     step_locomotion(world, dt, actions);
     update_interaction_focus(world);
     step_interact_input(world, actions);
@@ -1187,6 +1362,76 @@ flecs::entity spawn_item_pickup(
                           .add<Interactable>()
                           .add<ecs::InstanceTag>();
     return e;
+}
+
+flecs::entity spawn_npc_combatant(
+    flecs::world&      world,
+    const glm::vec3&   position,
+    u32                faction_id,
+    const PatrolRoute& route,
+    const char*        name)
+{
+    NpcCombatant npc{};
+
+    CharacterController cc{};
+    cc.move_speed = npc.move_speed;
+    cc.grounded   = true;
+
+    Health hp{};
+    hp.max_hp = 80.f;
+    hp.hp     = 80.f;
+
+    // Side-arm profile; NPC ammo is effectively infinite (no reload loop).
+    EquippedItem gun{};
+    gun.item_id       = kItemPistol;
+    gun.damage        = 8.f;
+    gun.fire_cooldown = 0.7f;
+    gun.ammo          = 9999;
+    gun.ammo_max      = 9999;
+
+    ai::AiAgent agent{};
+    agent.detection_range      = 35.f;
+    agent.attack_range         = npc.fire_range;
+    agent.flee_health_fraction = 0.25f;
+
+    const ecs::Position pos{position.x, position.y, position.z};
+    flecs::entity e = world.entity(name)
+                          .set<NpcCombatant>(npc)
+                          .set<CharacterController>(cc)
+                          .set<Health>(hp)
+                          .set<EquippedItem>(gun)
+                          .set<ai::AiAgent>(agent)
+                          .set<ai::FactionMember>({faction_id})
+                          .set<PatrolRoute>(route)
+                          .set<ecs::Position>(pos)
+                          .set<ecs::PreviousPosition>({pos.x, pos.y, pos.z})
+                          .set<ecs::Velocity>({0.f, 0.f, 0.f})
+                          .set<ecs::Orientation>({})
+                          .set<ecs::Scale>({0.7f})
+                          .add<ecs::InstanceTag>()
+                          .add<ecs::KinematicFromRigidBody>();
+
+    log::log_info(
+        log::LogCategory::Game,
+        "Spawned NPC combatant '%s' faction=%u at (%.1f, %.1f, %.1f)",
+        name,
+        faction_id,
+        static_cast<double>(position.x),
+        static_cast<double>(position.y),
+        static_cast<double>(position.z));
+    return e;
+}
+
+flecs::entity spawn_cover_point(flecs::world& world, const glm::vec3& position)
+{
+    const ecs::Position pos{position.x, position.y, position.z};
+    return world.entity()
+        .set<CoverPoint>(CoverPoint{})
+        .set<ecs::Position>(pos)
+        .set<ecs::PreviousPosition>({pos.x, pos.y, pos.z})
+        .set<ecs::Velocity>({0.f, 0.f, 0.f})
+        .set<ecs::Scale>({0.9f})
+        .add<ecs::InstanceTag>();
 }
 
 flecs::entity spawn_turret_seat(

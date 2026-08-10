@@ -56,6 +56,13 @@ struct DebugUiStats {
     u32  active_missions       = 0;
     char cargo_summary[64]{};
     char mission_summary[48]{};
+
+    /// AI telemetry (P2-11) — agents per FSM state, shown when any exist.
+    bool has_ai_telemetry = false;
+    u32  ai_patrol        = 0;
+    u32  ai_alert         = 0;
+    u32  ai_combat        = 0;
+    u32  ai_flee          = 0;
 };
 
 /// ImGui overlay state — plain POD + Vulkan resources owned here.
