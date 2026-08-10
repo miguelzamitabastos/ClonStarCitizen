@@ -6,6 +6,7 @@
 #include "game/character/character.hpp"
 #include "game/economy/economy.hpp"
 #include "game/flight/flight.hpp"
+#include "game/save/save.hpp"
 #include "game/world/world.hpp"
 
 #ifndef CSC_DEBUG_UI
@@ -328,6 +329,30 @@ void draw_pause_menu(flecs::world& world, UiMenuState& menus)
         }
 
         ImGui::Separator();
+        ImGui::TextUnformatted("Save / Load (P1F)");
+        if (ImGui::Button("Save Slot 0", ImVec2(200.f, 0.f))) {
+            click_ui();
+            (void)save::save_to_slot(world, save::SaveSlot::Slot0);
+        }
+        if (ImGui::Button("Load Slot 0", ImVec2(200.f, 0.f))) {
+            click_ui();
+            (void)save::load_from_slot(world, save::SaveSlot::Slot0);
+        }
+        if (ImGui::Button("Quicksave (F5)", ImVec2(200.f, 0.f))) {
+            click_ui();
+            (void)save::save_to_slot(world, save::SaveSlot::Quick);
+        }
+        if (ImGui::Button("Quickload (F9)", ImVec2(200.f, 0.f))) {
+            click_ui();
+            (void)save::load_from_slot(world, save::SaveSlot::Quick);
+        }
+        if (const save::SaveInProgress* sip = world.try_get<save::SaveInProgress>()) {
+            if (sip->active) {
+                ImGui::TextUnformatted("Saving…");
+            }
+        }
+
+        ImGui::Separator();
         ImGui::TextUnformatted("HUD mode");
         int mode = static_cast<int>(menus.hud_mode);
         if (ImGui::RadioButton("Auto", &mode, static_cast<int>(HudDisplayMode::Auto))) {
@@ -482,6 +507,21 @@ void frame_draw(flecs::world& world)
     }
     if (show_on_foot) {
         draw_on_foot_hud(world);
+    }
+
+    if (const save::SaveInProgress* sip = world.try_get<save::SaveInProgress>()) {
+        if (sip->active) {
+            ImGui::SetNextWindowPos(ImVec2(16.f, 16.f), ImGuiCond_Always);
+            ImGui::SetNextWindowBgAlpha(0.7f);
+            if (ImGui::Begin(
+                    "SaveStatus",
+                    nullptr,
+                    ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize
+                        | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav)) {
+                ImGui::TextUnformatted("Saving…");
+            }
+            ImGui::End();
+        }
     }
 
     if (menus->pause_open) {

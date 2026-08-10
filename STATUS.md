@@ -1,6 +1,23 @@
 # STATUS
 
-## Fase activa: Fase 1 — Vertical Slice — **EN PROGRESO**
+## Fase activa: Fase 1 — Vertical Slice — **COMPLETADA** (PARADA: validación física)
+
+## Cierre Fase 1 — resumen del bucle jugable
+
+Con P1A–P1F cerrados, el vertical slice permite de punta a punta:
+
+1. **Volar** una nave 6DOF (acoplado/desacoplado, potencia, escudos, armas, daño).
+2. **Bajar a pie** (interior LocalToShip → EVA → gravedad de estación / combate FPS).
+3. **Comerciar y misiones** (compra/venta, bodega, reputación, MissionActive).
+4. **Navegar el sistema fijo** (floating origin + rebase, estación, LZ planetaria).
+5. **HUD / pausa / audio** (ImGui + miniaudio cues).
+6. **Guardar y cargar** la partida (F5/F9 o menú Esc → Slot0) y recuperar nave,
+   carga, misión, reputación, ControlMode y FloatingOrigin.
+
+**PARADA:** no se inicia Fase 2 hasta validación física del usuario sobre las escenas
+demo (`flight_test`, `on_foot_test`, `economy_test`, `universe_test`, `ui_audio_test`,
+`save_load_test`). Siguiente documento pendiente: `08-FASE-2-PROFUNDIDAD-DE-SISTEMAS.md`
+(solo tras OK explícito).
 
 ## Progreso por documento
 - P0 Cimientos del Motor: [#############] 13/13 tareas — COMPLETADA
@@ -51,7 +68,14 @@
   - [x] P1E-05 Audio 3D **miniaudio** 0.11.21; voice pool `kMaxConcurrentVoices=16`; buses SFX/Music/UI
   - [x] P1E-06 Cues: fire / thruster loop / impact (integrity drop) / UI click
   - [x] P1E-07 Escena `ui_audio_test` (HUDs Both + pause + ≥3 tonos posicionales)
-- P1F Persistencia:       [......] 0/6  tareas
+- P1F Persistencia:       [######] 6/6  tareas — COMPLETADA
+  - [x] P1F-01 Formato versionado binario (`magic='CSV1'` + `schema_version`)
+  - [x] P1F-02 `PersistentId { u64 }` + contador singleton (nunca handles Flecs en archivo)
+  - [x] P1F-03 Serialización: RigidBody/hull/shield/power, CargoHold, Wallet, misiones,
+        FactionReputation, Health/LocalToShip, ControlMode, FloatingOrigin
+  - [x] P1F-04 Slots `saves/slot0.sav` + autosave + quicksave; `SaveInProgress` HUD
+  - [x] P1F-05 Rechazo controlado de versión desconocida (log error, sin crash)
+  - [x] P1F-06 Escena `save_load_test` + `CSC_SAVE_SMOKE=1` PASS/FAIL
 
 ## Escenas demo
 | Escena | Estado |
@@ -62,7 +86,20 @@
 | `economy_test` | P1C OK — MarketA cheap ore → TravelPad → MarketB sell/turn-in |
 | `universe_test` | P1D OK — Estacion-Alfa → espacio (rebase ≥1) → Planeta-01-LZ |
 | `ui_audio_test` | P1E OK — HUD Both, Esc pause, 3 positional sine tones (synthetic PCM) |
-| `save_load_test` | pendiente P1F-06 |
+| `save_load_test` | P1F OK — F5/F9 + pause Save/Load; CSC_SAVE_SMOKE |
+
+## Decisiones P1F (documentadas)
+1. **Formato (P1F-01):** binario versionado poco-endian con cabecera
+   `SaveHeader { u32 magic = 0x31565343 ('CSV1'), u32 schema_version = 1 }`.
+   Payload de longitud fija por esquema (campos POD escritos campo-a-campo).
+   **No** es formato texto temporal: candidato a compactar/migrar en Fase 6 si el
+   tamaño crece; por ahora v1 basta y el rechazo de versión desconocida es estricto.
+2. **IDs (P1F-02):** `PersistentId { u64 id }` en entidades guardables; asignación
+   incremental vía singleton `PersistentIdCounter`. Referencias cruzadas en save
+   (ej. LocalToShip → nave) usan PersistentId, nunca `flecs::entity_t`.
+3. **I/O / frame (P1F-04):** `save_game` / `load_game` pueden alocar buffers fuera del
+   fixed-step; `SaveInProgress` bloquea solapes y se refleja en HUD. F5/F9 =
+   `Action::QuickSave` / `QuickLoad`; menú pausa expone Slot0 + quick.
 
 ## Decisiones P1E (documentadas)
 1. **UI framework (P1E-01):** opción **(a) Dear ImGui** también para UI de juego esta fase.
@@ -86,7 +123,7 @@
 |---|---|
 | Esquema | f32 relative to current origin; absolute ≈ relative + `FloatingOrigin.origin_offset` |
 | Umbral de rebase | **2000 m** (`kFloatingOriginThreshold` / `FloatingOrigin.threshold`) |
-| Disparo | `\|player_pos_relative\| > threshold` (nave `RigidBody6DOF` o personaje world / LocalToShip→world) |
+| Disparo | `|player_pos_relative| > threshold` (nave `RigidBody6DOF` o personaje world / LocalToShip→world) |
 | Acción | Una pasada O(n): resta `player_pos` de Position, PreviousPosition, RigidBody6DOF.position, GravityZone.center, LevelStreamTrigger.center, Camera3D eye/target; `origin_offset += delta`; `rebase_count++` |
 | LocalToShip | `local_position` **no** se desplaza (espacio nave); caches world se re-sincronizan |
 | Cuándo | Solo en `game::world::fixed_step` (vía `game::fixed_step`) — nunca en el render loop |
@@ -106,6 +143,7 @@ Cuando una entidad lleva `LocalToShip { ship_entity, local_position, local_orien
 5. Al salir (quitar `LocalToShip`), se bakea la pose mundial y la sim pasa a espacio mundo / GravityZone.
 
 ## Bitácora (más reciente arriba, una línea por tarea)
+- 2026-08-10 [P1F-01..06] Binary save schema v1 + PersistentId; slots/quicksave; save_load_test; CSC_SAVE_SMOKE; Fase 1 COMPLETADA — PARADA validación física.
 - 2026-08-10 [P1E-01..07] UI=ImGui (Fase 6 rework); HUD flight/on-foot; pause+menus; miniaudio voice pool 16 + SFX/Music/UI buses; `--scene=ui_audio_test`.
 - 2026-08-10 [P1C-01..07,09] Economy: cfg Commodity/Market/MissionTemplate; CargoHold+Wallet; buy/sell supply curve; MissionActive Pool; FactionReputation; NPC Interact; `--scene=economy_test`. Load-time parsers only (no heap in loop).
 - 2026-08-10 [P1D-01..08] Floating origin (threshold 2000 m); StarSystemData+cfg placeholders; LevelStreamTrigger soft load; station LocalToShip+GravityZone; landing LZ; `--scene=universe_test`; debug rebase_count.

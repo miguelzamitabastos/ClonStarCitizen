@@ -73,6 +73,10 @@ void input_set_default_bindings(InputSystem& sys)
 
     // P1E: Esc toggles pause menu / SimulationPaused.
     add_binding(sys, BindingDevice::Keyboard, GLFW_KEY_ESCAPE, Action::Pause);
+
+    // P1F: F5 quicksave / F9 quickload.
+    add_binding(sys, BindingDevice::Keyboard, GLFW_KEY_F5, Action::QuickSave);
+    add_binding(sys, BindingDevice::Keyboard, GLFW_KEY_F9, Action::QuickLoad);
 }
 
 void input_set_config(InputSystem& sys, const InputConfig& config)

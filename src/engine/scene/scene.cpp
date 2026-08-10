@@ -5,6 +5,7 @@
 #include "game/character/character.hpp"
 #include "game/economy/economy.hpp"
 #include "game/flight/flight.hpp"
+#include "game/save/save.hpp"
 #include "game/ui/ui.hpp"
 #include "game/world/world.hpp"
 
@@ -265,6 +266,93 @@ bool setup_ui_audio_test(SceneContext& ctx)
     return true;
 }
 
+bool setup_save_load_test(SceneContext& ctx)
+{
+    if (ctx.world == nullptr) {
+        return false;
+    }
+
+    ecs::world_spawn_default_camera(*ctx.world, ctx.aspect);
+    ecs::world_spawn_default_grid(*ctx.world);
+
+    game::save::ensure_singletons(*ctx.world);
+    game::ui::ensure_singletons(*ctx.world);
+
+    game::world::StarSystemData system{};
+    (void)game::world::load_star_system_config(system, "assets/data/star_system.cfg");
+    ctx.world->set<game::world::StarSystemData>(system);
+
+    game::world::FloatingOrigin fo{};
+    fo.threshold     = game::world::kFloatingOriginThreshold;
+    fo.rebase_count  = 1; // non-zero so save/load can prove restore
+    fo.origin_offset = glm::vec3{100.f, 0.f, -50.f};
+    ctx.world->set<game::world::FloatingOrigin>(fo);
+
+    (void)game::economy::load_economy_data(*ctx.world);
+
+    game::flight::spawn_projectile_pool(*ctx.world);
+    flecs::entity ship =
+        game::flight::spawn_player_ship(*ctx.world, glm::vec3{12.f, 8.f, -30.f});
+    game::economy::attach_cargo_hold_if_missing(ship);
+
+    // Coasting in flight with modified hull / shield / power.
+    if (game::flight::RigidBody6DOF* rb = ship.try_get_mut<game::flight::RigidBody6DOF>()) {
+        rb->linear_vel = glm::vec3{0.f, 0.f, -18.f};
+    }
+    if (game::flight::FlightControl* fc = ship.try_get_mut<game::flight::FlightControl>()) {
+        fc->coupled = false;
+    }
+    if (game::flight::ShipHull* hull = ship.try_get_mut<game::flight::ShipHull>()) {
+        hull->hp = 720.f;
+    }
+    if (game::flight::ShieldGenerator* sh = ship.try_get_mut<game::flight::ShieldGenerator>()) {
+        sh->current = 210.f;
+    }
+    if (game::flight::PowerPlant* pp = ship.try_get_mut<game::flight::PowerPlant>()) {
+        pp->stored = 640.f;
+    }
+
+    // Cargo + wallet + reputation + active mission.
+    if (game::economy::CargoHold* hold = ship.try_get_mut<game::economy::CargoHold>()) {
+        const game::economy::CommodityTable* table =
+            ctx.world->try_get<game::economy::CommodityTable>();
+        if (table != nullptr) {
+            (void)game::economy::cargo_add(*hold, *table, 1u, 5u);
+            (void)game::economy::cargo_add(*hold, *table, 2u, 2u);
+        }
+    }
+    ctx.world->set<game::economy::PlayerWallet>({750});
+    {
+        game::economy::FactionReputation rep{};
+        rep.values[0] = 12.5f;
+        rep.values[1] = -3.f;
+        ctx.world->set<game::economy::FactionReputation>(rep);
+    }
+    if (game::economy::MissionActivePool* pool =
+            ctx.world->try_get_mut<game::economy::MissionActivePool>()) {
+        const game::economy::MissionTemplateTable* templates =
+            ctx.world->try_get<game::economy::MissionTemplateTable>();
+        if (templates != nullptr) {
+            (void)game::economy::mission_try_accept(*pool, *templates, 1u);
+        }
+    }
+
+    // Character in EVA near the ship (world space — proves Health restore).
+    (void)game::character::spawn_player_character(
+        *ctx.world, glm::vec3{14.f, 7.5f, -28.f}, 0);
+
+    ctx.world->set<ecs::ControlMode>({ecs::ControlModeKind::ShipPilot});
+
+    ctx.needs_shared_mesh = true;
+    ctx.instance_count    = 3u + static_cast<u32>(game::flight::kProjectilePoolSize);
+
+    log::log_info(
+        log::LogCategory::Game,
+        "save_load_test: F5=QuickSave F9=QuickLoad | Esc pause → Save/Load Slot0 | "
+        "ship in flight + cargo + mission + modified reputation");
+    return true;
+}
+
 constexpr SceneDesc kScenes[] = {
     {"grid_freelook",
      "Free-look camera + ground grid (minimal baseline)",
@@ -290,6 +378,9 @@ constexpr SceneDesc kScenes[] = {
     {"ui_audio_test",
      "Flight+on-foot HUD, pause menus, ≥3 positional tones (P1E)",
      &setup_ui_audio_test},
+    {"save_load_test",
+     "Persist ship/cargo/mission/rep; F5 save F9 load (P1F)",
+     &setup_save_load_test},
 };
 
 constexpr std::size_t kSceneCount = sizeof(kScenes) / sizeof(kScenes[0]);

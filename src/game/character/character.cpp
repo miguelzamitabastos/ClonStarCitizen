@@ -4,6 +4,7 @@
 #include "engine/log/log.hpp"
 #include "game/economy/economy.hpp"
 #include "game/flight/flight.hpp"
+#include "game/save/save.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -814,6 +815,8 @@ flecs::entity spawn_player_character(
             write_world_pose(e, wpos, wori, false);
         }
     }
+
+    (void)save::assign_persistent_id(world, e);
 
     log::log_info(
         log::LogCategory::Core,

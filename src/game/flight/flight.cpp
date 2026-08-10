@@ -4,6 +4,7 @@
 #include "engine/log/log.hpp"
 #include "game/character/character.hpp"
 #include "game/economy/economy.hpp"
+#include "game/save/save.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -825,6 +826,7 @@ flecs::entity spawn_player_ship(flecs::world& world, const glm::vec3& position)
             .add<PlayerShip>();
 
     economy::attach_cargo_hold_if_missing(ship);
+    (void)save::assign_persistent_id(world, ship);
 
     log::log_info(
         log::LogCategory::Core,
