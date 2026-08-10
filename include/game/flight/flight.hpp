@@ -150,6 +150,38 @@ struct WeaponMountSet {
     u32         count = 1;
 };
 
+// --- P2-03: turrets -----------------------------------------------------------
+
+inline constexpr f32 kTurretTurnRate   = 2.4f;         // rad/s slew
+inline constexpr f32 kTurretYawLimit   = 2.09439510f;  // ±120°
+inline constexpr f32 kTurretPitchLimit = 1.04719755f;  // ±60°
+inline constexpr f32 kTurretAimConeCos = 0.9961947f;   // fire when within ~5°
+inline constexpr f32 kTurretMuzzleLen  = 1.4f;
+
+/// Rotating weapon mount fixed to a host ship. Aim = rest * Ry(yaw) * Rx(pitch),
+/// clamped to the firing arc (yaw/pitch limits around the rest forward -Z).
+/// Driven by the SHARED AI (ai::AiAgent on this same entity) or by the player
+/// (ControlModeKind::TurretControl via ActiveTurretControl). Its operability is
+/// the host ship's Weapons subsystem (P2-02) — no parallel turret HP.
+struct TurretMount {
+    flecs::entity_t ship = 0;
+    glm::vec3       local_offset{0.f, 1.6f, 0.f};
+    glm::quat       local_rest{1.f, 0.f, 0.f, 0.f};
+    f32             yaw             = 0.f; // relative to rest
+    f32             pitch           = 0.f;
+    f32             yaw_limit       = kTurretYawLimit;
+    f32             pitch_limit     = kTurretPitchLimit;
+    f32             turn_rate       = kTurretTurnRate;
+    bool            requires_gunner = true; ///< needs a living TurretGunner crew
+    WeaponMount     weapon{};               // same POD weapon as fixed mounts
+};
+
+/// Flecs singleton: which turret the player is manning (0 = none).
+struct ActiveTurretControl {
+    flecs::entity_t turret = 0;
+    flecs::entity_t seat   = 0;
+};
+
 struct FlightControl {
     bool      coupled      = true;
     glm::vec3 thrust_input{0.f}; // body: +X right, +Y up, +Z forward (!= local -Z)
@@ -204,6 +236,24 @@ void map_flight_control_to_thrusters(
     flecs::entity_t  ship,
     CrewRole         role,
     const glm::vec3& local_seat,
+    const char*      name);
+
+/// P2-03: spawn a turret mounted on `ship`. `faction_id` feeds the shared AI
+/// (ai::FactionMember); detection uses the host ship sensors (ai::SensorLink).
+[[nodiscard]] flecs::entity spawn_turret(
+    flecs::world&    world,
+    flecs::entity_t  ship,
+    const glm::vec3& local_offset,
+    u32              faction_id,
+    bool             requires_gunner,
+    const char*      name);
+
+/// NPC ship platform: RigidBody + hull/shield/power/subsystems (P2-02) but no
+/// player control. Movement AI arrives with encounters (P2-12).
+[[nodiscard]] flecs::entity spawn_npc_ship(
+    flecs::world&    world,
+    const glm::vec3& position,
+    u32              faction_id,
     const char*      name);
 
 /// Pre-spawn inactive projectile entities into ProjectilePool singleton (level load).

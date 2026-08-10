@@ -5,10 +5,10 @@
 Fase 1 validada físicamente por el usuario (2026-08-10) — apertura de Fase 2.
 
 ## Progreso Fase 2
-- Naves y vuelo (P2-01..04):   [##] 2/4
+- Naves y vuelo (P2-01..04):   [###] 3/4
   - [x] P2-01 Tripulación NPC (artillero / ingeniero) con asiento fijo LocalToShip
   - [x] P2-02 Daño por componente (ENG/SHD/WPN/SEN) vía DamageEvent.subsystem
-  - [ ] P2-03 Torretas giratorias (IA o jugador) con arco de disparo
+  - [x] P2-03 Torretas giratorias (IA o jugador) con arco de disparo
   - [ ] P2-04 Modelo de vuelo atmosférico vs vacío (arrastre + sustentación)
 - A pie (P2-05..07):           [.] 0/3
   - [ ] P2-05 Inventario completo (slots equipo, recogibles, uso de items)
@@ -189,6 +189,11 @@ Cuando una entidad lleva `LocalToShip { ship_entity, local_position, local_orien
 5. Al salir (quitar `LocalToShip`), se bakea la pose mundial y la sim pasa a espacio mundo / GravityZone.
 
 ## Bitácora (más reciente arriba, una línea por tarea)
+- 2026-08-10 [P2-03] Torretas: TurretMount (arco ±120° yaw / ±60° pitch, slew 2.4 rad/s),
+  actuación IA desde AiAgent compartido o jugador (TurretSeat → ControlMode::TurretControl,
+  Interact sale). Disparo compartido weapon_try_consume/weapon_emit (cero duplicación P1A).
+  Gate: banco Weapons P2-02 + gunner vivo (requires_gunner). Escena `crew_turret_test`
+  verificada en lavapipe: pirata daña subsistemas del jugador (captura en artifacts/).
 - 2026-08-10 [P2-01] Tripulación NPC: CrewMember (gunner/engineer) sentado vía LocalToShip
   (mismo patrón que jugador a pie, sin física propia). Ingeniero repara el banco más dañado
   a 6 HP/s tras el daño del tick. Gunner enlaza turret (actuación en P2-03). Crew no

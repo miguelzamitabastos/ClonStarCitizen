@@ -113,6 +113,12 @@ struct PilotSeat {
     flecs::entity_t ship = 0;
 };
 
+/// P2-03: turret seat — Interact enters TurretControl for `turret`
+/// (Interact again while manning exits back to OnFoot).
+struct TurretSeat {
+    flecs::entity_t turret = 0;
+};
+
 struct PlayerCharacter {};
 struct CharacterDead {};
 
@@ -187,6 +193,14 @@ void fixed_step(flecs::world& world, f32 dt);
     flecs::entity_t  ship,
     const glm::vec3& local_pos,
     const char*      prompt = "Pilot seat");
+
+/// P2-03: interactable seat that puts the player in control of `turret`.
+[[nodiscard]] flecs::entity spawn_turret_seat(
+    flecs::world&    world,
+    flecs::entity_t  ship,
+    flecs::entity_t  turret,
+    const glm::vec3& local_pos,
+    const char*      prompt = "Turret seat");
 
 [[nodiscard]] flecs::entity spawn_station_interactable(
     flecs::world& world, const glm::vec3& position, const char* prompt = "Station terminal");

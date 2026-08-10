@@ -1,6 +1,7 @@
 #include "engine/scene/scene.hpp"
 
 #include "engine/log/log.hpp"
+#include "game/ai/ai.hpp"
 #include "game/audio/audio.hpp"
 #include "game/character/character.hpp"
 #include "game/economy/economy.hpp"
@@ -141,6 +142,83 @@ bool setup_on_foot_test(SceneContext& ctx)
     ctx.needs_shared_mesh = true;
     // ship + player + hatch + seat + station deck + terminal + health target + projectiles
     ctx.instance_count = 7u + static_cast<u32>(game::flight::kProjectilePoolSize);
+    return true;
+}
+
+bool setup_crew_turret_test(SceneContext& ctx)
+{
+    if (ctx.world == nullptr) {
+        return false;
+    }
+
+    ecs::world_spawn_default_camera(*ctx.world, ctx.aspect);
+    ecs::world_spawn_default_grid(*ctx.world);
+
+    game::flight::spawn_projectile_pool(*ctx.world);
+
+    // Player ship with full NPC crew: engineer + turret gunner (P2-01).
+    flecs::entity ship =
+        game::flight::spawn_player_ship(*ctx.world, glm::vec3{0.f, 5.f, 0.f});
+
+    flecs::entity turret = game::flight::spawn_turret(
+        *ctx.world, ship.id(), glm::vec3{0.f, 1.8f, 0.f}, 0u, true, "PlayerTurret");
+
+    (void)game::flight::spawn_crew_member(
+        *ctx.world,
+        ship.id(),
+        game::flight::CrewRole::Engineer,
+        glm::vec3{-1.2f, 0.9f, 0.5f},
+        "CrewEngineer");
+    flecs::entity gunner = game::flight::spawn_crew_member(
+        *ctx.world,
+        ship.id(),
+        game::flight::CrewRole::TurretGunner,
+        glm::vec3{1.2f, 0.9f, 0.5f},
+        "CrewGunner");
+    if (game::flight::CrewMember* cm = gunner.try_get_mut<game::flight::CrewMember>()) {
+        cm->turret = turret.id();
+    }
+
+    // Seat so the player can take the turret manually (P2-03 seat change).
+    (void)game::character::spawn_turret_seat(
+        *ctx.world, ship.id(), turret.id(), glm::vec3{0.f, 0.9f, 1.2f}, "Turret seat");
+    (void)game::character::spawn_pilot_seat(
+        *ctx.world, ship.id(), glm::vec3{0.f, 0.9f, -1.5f}, "Pilot seat");
+
+    // Hostile pirate platform ahead: its AI turret opens fire on the player
+    // (faction 3 = pirates, hostile a todos — mismo framework P2-11).
+    flecs::entity pirate = game::flight::spawn_npc_ship(
+        *ctx.world, glm::vec3{0.f, 6.f, -70.f}, game::ai::kPirateFaction, "PirateSkiff");
+    // Face the player so its turret arc (±120° around rest -Z) covers us.
+    {
+        const glm::quat face_player =
+            glm::angleAxis(glm::pi<f32>(), glm::vec3{0.f, 1.f, 0.f});
+        if (game::flight::RigidBody6DOF* rb =
+                pirate.try_get_mut<game::flight::RigidBody6DOF>()) {
+            rb->orientation = face_player;
+        }
+        if (ecs::Orientation* o = pirate.try_get_mut<ecs::Orientation>()) {
+            o->q = face_player;
+        }
+    }
+    (void)game::flight::spawn_turret(
+        *ctx.world,
+        pirate.id(),
+        glm::vec3{0.f, 1.8f, 0.f},
+        game::ai::kPirateFaction,
+        false,
+        "PirateTurret");
+
+    ctx.world->set<ecs::ControlMode>({ecs::ControlModeKind::ShipPilot});
+
+    ctx.needs_shared_mesh = true;
+    // ship + turret + 2 crew + 2 seats + pirate + pirate turret + projectiles
+    ctx.instance_count = 8u + static_cast<u32>(game::flight::kProjectilePoolSize);
+
+    log::log_info(
+        log::LogCategory::Game,
+        "crew_turret_test: pirate turret vs crewed player ship | subsystem HUD | "
+        "engineer repairs | turret seat via [F]");
     return true;
 }
 
@@ -369,6 +447,9 @@ constexpr SceneDesc kScenes[] = {
     {"on_foot_test",
      "Ship interior → EVA → station gravity + FPS combat (P1B)",
      &setup_on_foot_test},
+    {"crew_turret_test",
+     "NPC crew + AI turrets + subsystem damage (P2-01/02/03)",
+     &setup_crew_turret_test},
     {"economy_test",
      "Buy ore@A → travel B → sell margin + delivery mission (P1C)",
      &setup_economy_test},

@@ -382,6 +382,16 @@ void handle_interact_events(flecs::world& world)
             continue;
         }
 
+        // --- Turret seat: OnFoot → TurretControl (P2-03) --------------------
+        if (const TurretSeat* tseat = target.try_get<TurretSeat>()) {
+            if (tseat->turret != 0) {
+                world.set<ecs::ControlMode>({ecs::ControlModeKind::TurretControl});
+                world.set<flight::ActiveTurretControl>({tseat->turret, target.id()});
+                log::log_info(log::LogCategory::Core, "Turret seat: → TurretControl");
+            }
+            continue;
+        }
+
         // Economy NPCs (TradeOffer / Dialogue / TravelPad) — P1C-06.
         if (economy::handle_interact(world, ev.actor, ev.target)) {
             continue;
@@ -727,6 +737,16 @@ void fixed_step(flecs::world& world, f32 dt)
     // Sync attached props (hatches) before interact ray / locomotion reads world poses.
     sync_local_to_ship_world(world);
 
+    // P2-03: Interact while manning a turret exits back to OnFoot (no ray needed).
+    if (const ecs::ControlMode* mode = world.try_get<ecs::ControlMode>();
+        mode != nullptr && mode->mode == ecs::ControlModeKind::TurretControl
+        && actions != nullptr
+        && actions->just_pressed[static_cast<u16>(input::Action::Interact)]) {
+        world.set<ecs::ControlMode>({ecs::ControlModeKind::OnFoot});
+        world.set<flight::ActiveTurretControl>({});
+        log::log_info(log::LogCategory::Core, "Turret seat: → OnFoot");
+    }
+
     step_locomotion(world, dt, actions);
     update_interaction_focus(world);
     step_interact_input(world, actions);
@@ -933,6 +953,46 @@ flecs::entity spawn_pilot_seat(
     flecs::entity e = world.entity("PilotSeat")
                           .set<LocalToShip>(local)
                           .set<PilotSeat>(seat)
+                          .set<InteractablePrompt>(pr)
+                          .set<ecs::Position>({local_pos.x, local_pos.y, local_pos.z})
+                          .set<ecs::PreviousPosition>({local_pos.x, local_pos.y, local_pos.z})
+                          .set<ecs::Velocity>({0.f, 0.f, 0.f})
+                          .set<ecs::Scale>({0.4f})
+                          .add<Interactable>()
+                          .add<ecs::InstanceTag>()
+                          .add<ecs::KinematicFromRigidBody>();
+
+    flight::RigidBody6DOF ship_rb{};
+    if (try_get_ship_rb(world, ship, ship_rb)) {
+        glm::vec3 wpos{};
+        glm::quat wori{};
+        world_from_local(ship_rb, local.local_position, local.local_orientation, wpos, wori);
+        write_world_pose(e, wpos, wori, true);
+        write_world_pose(e, wpos, wori, false);
+    }
+    return e;
+}
+
+flecs::entity spawn_turret_seat(
+    flecs::world&    world,
+    flecs::entity_t  ship,
+    flecs::entity_t  turret,
+    const glm::vec3& local_pos,
+    const char*      prompt)
+{
+    InteractablePrompt pr{};
+    copy_prompt(pr.label, sizeof(pr.label), prompt);
+
+    LocalToShip local{};
+    local.ship_entity    = ship;
+    local.local_position = local_pos;
+
+    TurretSeat seat{};
+    seat.turret = turret;
+
+    flecs::entity e = world.entity("TurretSeat")
+                          .set<LocalToShip>(local)
+                          .set<TurretSeat>(seat)
                           .set<InteractablePrompt>(pr)
                           .set<ecs::Position>({local_pos.x, local_pos.y, local_pos.z})
                           .set<ecs::PreviousPosition>({local_pos.x, local_pos.y, local_pos.z})
