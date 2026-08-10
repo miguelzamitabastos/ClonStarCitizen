@@ -61,6 +61,61 @@ struct EquippedItem {
     f32 cooldown_remaining = 0.f;
 };
 
+// --- P2-05: full inventory -----------------------------------------------------
+
+inline constexpr u32 kMaxInventorySlots = 8;
+inline constexpr u32 kItemNameBytes     = 24;
+
+enum class ItemKind : u8 {
+    None       = 0,
+    Weapon     = 1,
+    Consumable = 2,
+};
+
+/// Static item catalog entry (fixed table, no runtime registration).
+struct ItemDef {
+    u32      id   = 0;
+    char     name[kItemNameBytes]{};
+    ItemKind kind = ItemKind::None;
+    // Weapon stats (kind == Weapon)
+    f32 damage        = 0.f;
+    f32 fire_cooldown = 0.f;
+    u32 ammo_max      = 0;
+    // Consumable effect (kind == Consumable)
+    f32 heal_amount = 0.f;
+    u32 ammo_refill = 0;
+};
+
+/// Catalog ids: 1=Rifle, 2=Pistol, 3=Medkit, 4=AmmoPack.
+inline constexpr u32 kItemRifle    = 1;
+inline constexpr u32 kItemPistol   = 2;
+inline constexpr u32 kItemMedkit   = 3;
+inline constexpr u32 kItemAmmoPack = 4;
+
+/// nullptr when the id is not in the catalog.
+[[nodiscard]] const ItemDef* item_find(u32 item_id);
+
+struct InventorySlot {
+    u32 item_id = 0;
+    u32 qty     = 0;
+};
+
+/// Fixed-slot personal inventory (P2-05). Weapon ammo resets on equip (simple).
+struct Inventory {
+    InventorySlot slots[kMaxInventorySlots]{};
+};
+
+/// World item the player can pick up via Interact.
+struct ItemPickup {
+    u32 item_id = 0;
+    u32 qty     = 1;
+};
+
+// Pure helpers (no ECS access).
+[[nodiscard]] bool inventory_add(Inventory& inv, u32 item_id, u32 qty);
+[[nodiscard]] bool inventory_remove(Inventory& inv, u32 item_id, u32 qty);
+[[nodiscard]] u32  inventory_count(const Inventory& inv, u32 item_id);
+
 enum class GravityZoneShape : u8 {
     Box    = 0,
     Sphere = 1,
@@ -204,6 +259,23 @@ void fixed_step(flecs::world& world, f32 dt);
 
 [[nodiscard]] flecs::entity spawn_station_interactable(
     flecs::world& world, const glm::vec3& position, const char* prompt = "Station terminal");
+
+/// P2-05: spawn a pickable item (Interact adds it to the player Inventory).
+[[nodiscard]] flecs::entity spawn_item_pickup(
+    flecs::world&    world,
+    const glm::vec3& position,
+    u32              item_id,
+    u32              qty);
+
+/// P2-05: HUD snapshot of the player's inventory (fixed buffers, no heap).
+struct InventoryTelemetry {
+    bool found = false;
+    char weapon_name[kItemNameBytes]{};
+    u32  medkits    = 0;
+    u32  ammo_packs = 0;
+};
+
+void fill_inventory_telemetry(flecs::world& world, InventoryTelemetry& out);
 
 /// Fill debug overlay fields from the first PlayerCharacter (if any).
 void fill_player_telemetry(

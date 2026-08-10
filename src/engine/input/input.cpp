@@ -77,6 +77,11 @@ void input_set_default_bindings(InputSystem& sys)
     // P1F: F5 quicksave / F9 quickload.
     add_binding(sys, BindingDevice::Keyboard, GLFW_KEY_F5, Action::QuickSave);
     add_binding(sys, BindingDevice::Keyboard, GLFW_KEY_F9, Action::QuickLoad);
+
+    // P2-05: inventory — G medkit, T cycle weapon, R reload from ammo pack.
+    add_binding(sys, BindingDevice::Keyboard, GLFW_KEY_G, Action::UseMedkit);
+    add_binding(sys, BindingDevice::Keyboard, GLFW_KEY_T, Action::CycleWeapon);
+    add_binding(sys, BindingDevice::Keyboard, GLFW_KEY_R, Action::Reload);
 }
 
 void input_set_config(InputSystem& sys, const InputConfig& config)

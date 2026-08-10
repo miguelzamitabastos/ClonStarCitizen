@@ -137,11 +137,28 @@ bool setup_on_foot_test(SceneContext& ctx)
     (void)game::character::spawn_health_target(
         *ctx.world, glm::vec3{kStationCenter.x + 4.f, 1.2f, kStationCenter.z}, 1.8f);
 
+    // P2-05: pickable items on the station pad (medkit / ammo / pistol).
+    (void)game::character::spawn_item_pickup(
+        *ctx.world,
+        glm::vec3{kStationCenter.x - 3.f, 0.9f, kStationCenter.z + 2.f},
+        game::character::kItemMedkit,
+        1u);
+    (void)game::character::spawn_item_pickup(
+        *ctx.world,
+        glm::vec3{kStationCenter.x - 4.5f, 0.9f, kStationCenter.z + 2.f},
+        game::character::kItemAmmoPack,
+        2u);
+    (void)game::character::spawn_item_pickup(
+        *ctx.world,
+        glm::vec3{kStationCenter.x - 6.f, 0.9f, kStationCenter.z + 2.f},
+        game::character::kItemPistol,
+        1u);
+
     ctx.world->set<ecs::ControlMode>({ecs::ControlModeKind::OnFoot});
 
     ctx.needs_shared_mesh = true;
-    // ship + player + hatch + seat + station deck + terminal + health target + projectiles
-    ctx.instance_count = 7u + static_cast<u32>(game::flight::kProjectilePoolSize);
+    // ship + player + hatch + seat + deck + terminal + target + 3 pickups + projectiles
+    ctx.instance_count = 10u + static_cast<u32>(game::flight::kProjectilePoolSize);
     return true;
 }
 

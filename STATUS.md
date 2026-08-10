@@ -10,8 +10,8 @@ Fase 1 validada físicamente por el usuario (2026-08-10) — apertura de Fase 2.
   - [x] P2-02 Daño por componente (ENG/SHD/WPN/SEN) vía DamageEvent.subsystem
   - [x] P2-03 Torretas giratorias (IA o jugador) con arco de disparo
   - [x] P2-04 Modelo de vuelo atmosférico vs vacío (arrastre + sustentación)
-- A pie (P2-05..07):           [.] 0/3
-  - [ ] P2-05 Inventario completo (slots equipo, recogibles, uso de items)
+- A pie (P2-05..07):           [#] 1/3
+  - [x] P2-05 Inventario completo (slots equipo, recogibles, uso de items)
   - [ ] P2-06 IA combate a pie (detección, cobertura, disparo) sobre P2-11
   - [ ] P2-07 Daño por zona (torso/extremidad) + muerte/reaparición jugador
 - Economía y misiones (P2-08..10): [.] 0/3
@@ -189,6 +189,10 @@ Cuando una entidad lleva `LocalToShip { ship_entity, local_position, local_orien
 5. Al salir (quitar `LocalToShip`), se bakea la pose mundial y la sim pasa a espacio mundo / GravityZone.
 
 ## Bitácora (más reciente arriba, una línea por tarea)
+- 2026-08-10 [P2-05] Inventario: catálogo fijo (Rifle/Pistola/Medkit/Munición), Inventory
+  8 slots POD, ItemPickup vía Interact (retira tags, sin delete en tick), teclas G/T/R
+  (medkit/cambiar arma/recargar; equipar resetea cargador — simplificación documentada),
+  HUD WPN+consumibles, pickups en on_foot_test. Siguiente: P2-06 usa mismos NPC Health.
 - 2026-08-10 [P2-04] Atmósfera vs vacío: AtmosphereVolume esférico (densidad lineal
   inner→outer), arrastre cuadrático + sustentación simplificada (AeroProfile Cd·A=25 /
   Cl·A=8) + gravedad planetaria para naves dentro del volumen. Rebase P1D-07 desplaza

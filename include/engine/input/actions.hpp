@@ -21,6 +21,9 @@ enum class Action : u16 {
     Pause, // Esc — toggle SimulationPaused / pause menu (P1E)
     QuickSave, // F5 — P1F
     QuickLoad, // F9 — P1F
+    UseMedkit,   // G — P2-05 consume medkit
+    CycleWeapon, // T — P2-05 next weapon in inventory
+    Reload,      // R — P2-05 consume ammo pack
     Count
 };
 

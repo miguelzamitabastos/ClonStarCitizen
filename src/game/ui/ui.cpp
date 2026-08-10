@@ -158,6 +158,17 @@ void draw_on_foot_hud(flecs::world& world)
         ImGui::TextUnformatted(line);
         std::snprintf(line, sizeof(line), "AMMO %u / %u", ammo, ammo_max);
         ImGui::TextUnformatted(line);
+
+        // P2-05: equipped weapon + consumables (T cycle / G medkit / R reload).
+        character::InventoryTelemetry inv{};
+        character::fill_inventory_telemetry(world, inv);
+        if (inv.found) {
+            std::snprintf(line, sizeof(line), "WPN  %s", inv.weapon_name);
+            ImGui::TextUnformatted(line);
+            std::snprintf(
+                line, sizeof(line), "MED x%u  AMMO-PK x%u", inv.medkits, inv.ammo_packs);
+            ImGui::TextUnformatted(line);
+        }
         std::snprintf(
             line,
             sizeof(line),

@@ -1,5 +1,7 @@
 #include "game/character/character.hpp"
 
+#include <cstdio>
+
 #include "engine/ecs/world.hpp"
 #include "engine/log/log.hpp"
 #include "game/economy/economy.hpp"
@@ -138,6 +140,97 @@ void write_world_pose(flecs::entity e, const glm::vec3& pos, const glm::quat& or
         // Render interp uses Position delta; zero ECS velocity (kinematic).
         *v = {};
     }
+}
+
+// --- P2-05: item catalog (fixed table) --------------------------------------
+
+constexpr ItemDef kItemCatalog[] = {
+    {kItemRifle, "Rifle", ItemKind::Weapon, 28.f, 0.16f, 60u, 0.f, 0u},
+    {kItemPistol, "Pistola", ItemKind::Weapon, 14.f, 0.30f, 24u, 0.f, 0u},
+    {kItemMedkit, "Medkit", ItemKind::Consumable, 0.f, 0.f, 0u, 50.f, 0u},
+    {kItemAmmoPack, "Municion", ItemKind::Consumable, 0.f, 0.f, 0u, 0.f, 30u},
+};
+
+/// P2-05: consume UseMedkit / CycleWeapon / Reload for the player character.
+void step_inventory(flecs::world& world, const input::ActionState* actions)
+{
+    if (actions == nullptr) {
+        return;
+    }
+    const bool use_medkit =
+        actions->just_pressed[static_cast<u16>(input::Action::UseMedkit)];
+    const bool cycle_weapon =
+        actions->just_pressed[static_cast<u16>(input::Action::CycleWeapon)];
+    const bool reload = actions->just_pressed[static_cast<u16>(input::Action::Reload)];
+    if (!use_medkit && !cycle_weapon && !reload) {
+        return;
+    }
+
+    world.each([&](flecs::entity e, Inventory& inv, Health& hp, EquippedItem& gun) {
+        if (!e.has<PlayerCharacter>() || e.has<CharacterDead>()) {
+            return;
+        }
+
+        if (use_medkit && hp.hp < hp.max_hp && inventory_count(inv, kItemMedkit) > 0) {
+            const ItemDef* def = item_find(kItemMedkit);
+            if (def != nullptr && inventory_remove(inv, kItemMedkit, 1u)) {
+                hp.hp = std::min(hp.max_hp, hp.hp + def->heal_amount);
+                log::log_info(
+                    log::LogCategory::Game, "Medkit used — HP %.0f/%.0f",
+                    static_cast<double>(hp.hp), static_cast<double>(hp.max_hp));
+            }
+        }
+
+        if (reload && gun.ammo < gun.ammo_max
+            && inventory_count(inv, kItemAmmoPack) > 0) {
+            const ItemDef* def = item_find(kItemAmmoPack);
+            if (def != nullptr && inventory_remove(inv, kItemAmmoPack, 1u)) {
+                gun.ammo = std::min(gun.ammo_max, gun.ammo + def->ammo_refill);
+                log::log_info(
+                    log::LogCategory::Game, "Reloaded — ammo %u/%u", gun.ammo, gun.ammo_max);
+            }
+        }
+
+        if (cycle_weapon) {
+            // Next weapon in the inventory after the current one (wraps around).
+            u32 next_weapon = 0;
+            u32 first_weapon = 0;
+            bool passed_current = false;
+            for (u32 i = 0; i < kMaxInventorySlots; ++i) {
+                const InventorySlot& s = inv.slots[i];
+                if (s.qty == 0) {
+                    continue;
+                }
+                const ItemDef* def = item_find(s.item_id);
+                if (def == nullptr || def->kind != ItemKind::Weapon) {
+                    continue;
+                }
+                if (first_weapon == 0) {
+                    first_weapon = s.item_id;
+                }
+                if (passed_current && next_weapon == 0) {
+                    next_weapon = s.item_id;
+                }
+                if (s.item_id == gun.item_id) {
+                    passed_current = true;
+                }
+            }
+            if (next_weapon == 0) {
+                next_weapon = first_weapon;
+            }
+            if (next_weapon != 0 && next_weapon != gun.item_id) {
+                const ItemDef* def = item_find(next_weapon);
+                if (def != nullptr) {
+                    gun.item_id       = def->id;
+                    gun.damage        = def->damage;
+                    gun.fire_cooldown = def->fire_cooldown;
+                    gun.ammo_max      = def->ammo_max;
+                    gun.ammo          = def->ammo_max; // simple: full mag on equip
+                    log::log_info(log::LogCategory::Game, "Equipped %s", def->name);
+                }
+            }
+        }
+    });
 }
 
 void sync_local_to_ship_world(flecs::world& world)
@@ -378,6 +471,30 @@ void handle_interact_events(flecs::world& world)
                     actor.remove<LocalToShip>();
                 }
                 log::log_info(log::LogCategory::Core, "Pilot seat: → ShipPilot");
+            }
+            continue;
+        }
+
+        // --- Item pickup: add to inventory and retire the prop (P2-05) ------
+        if (const ItemPickup* pickup = target.try_get<ItemPickup>()) {
+            Inventory* inv = actor.try_get_mut<Inventory>();
+            if (inv != nullptr && pickup->qty > 0
+                && inventory_add(*inv, pickup->item_id, pickup->qty)) {
+                const ItemDef* def = item_find(pickup->item_id);
+                log::log_info(
+                    log::LogCategory::Game,
+                    "Picked up %s x%u",
+                    (def != nullptr) ? def->name : "item",
+                    pickup->qty);
+                // Retire: strip interact + render tags; slot stays allocated
+                // (pool-style, no delete inside the sim tick).
+                target.set<ItemPickup>({pickup->item_id, 0u});
+                if (target.has<Interactable>()) {
+                    target.remove<Interactable>();
+                }
+                if (target.has<ecs::InstanceTag>()) {
+                    target.remove<ecs::InstanceTag>();
+                }
             }
             continue;
         }
@@ -751,8 +868,66 @@ void fixed_step(flecs::world& world, f32 dt)
     update_interaction_focus(world);
     step_interact_input(world, actions);
     handle_interact_events(world);
+    step_inventory(world, actions); // P2-05: medkit / weapon cycle / reload
     step_fps_combat(world, dt, actions);
     cleanup_dead_characters(world);
+}
+
+const ItemDef* item_find(u32 item_id)
+{
+    for (const ItemDef& def : kItemCatalog) {
+        if (def.id == item_id) {
+            return &def;
+        }
+    }
+    return nullptr;
+}
+
+bool inventory_add(Inventory& inv, u32 item_id, u32 qty)
+{
+    if (item_id == 0 || qty == 0 || item_find(item_id) == nullptr) {
+        return false;
+    }
+    for (u32 i = 0; i < kMaxInventorySlots; ++i) {
+        if (inv.slots[i].qty > 0 && inv.slots[i].item_id == item_id) {
+            inv.slots[i].qty += qty;
+            return true;
+        }
+    }
+    for (u32 i = 0; i < kMaxInventorySlots; ++i) {
+        if (inv.slots[i].qty == 0) {
+            inv.slots[i].item_id = item_id;
+            inv.slots[i].qty     = qty;
+            return true;
+        }
+    }
+    return false; // inventory full
+}
+
+bool inventory_remove(Inventory& inv, u32 item_id, u32 qty)
+{
+    for (u32 i = 0; i < kMaxInventorySlots; ++i) {
+        InventorySlot& s = inv.slots[i];
+        if (s.qty >= qty && s.item_id == item_id) {
+            s.qty -= qty;
+            if (s.qty == 0) {
+                s.item_id = 0;
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+u32 inventory_count(const Inventory& inv, u32 item_id)
+{
+    u32 total = 0;
+    for (u32 i = 0; i < kMaxInventorySlots; ++i) {
+        if (inv.slots[i].item_id == item_id) {
+            total += inv.slots[i].qty;
+        }
+    }
+    return total;
 }
 
 void register_systems(flecs::world& world)
@@ -803,10 +978,16 @@ flecs::entity spawn_player_character(
     glm::vec3 spawn_world = world_or_local_pos;
     glm::quat spawn_ori{1.f, 0.f, 0.f, 0.f};
 
+    // P2-05: starting inventory — rifle equipped + one medkit.
+    Inventory inv{};
+    (void)inventory_add(inv, kItemRifle, 1u);
+    (void)inventory_add(inv, kItemMedkit, 1u);
+
     flecs::entity e = world.entity("PlayerCharacter")
                           .set<CharacterController>(cc)
                           .set<Health>(hp)
                           .set<EquippedItem>(gun)
+                          .set<Inventory>(inv)
                           .set<ecs::Position>(
                               {spawn_world.x, spawn_world.y, spawn_world.z})
                           .set<ecs::PreviousPosition>(
@@ -973,6 +1154,41 @@ flecs::entity spawn_pilot_seat(
     return e;
 }
 
+flecs::entity spawn_item_pickup(
+    flecs::world&    world,
+    const glm::vec3& position,
+    u32              item_id,
+    u32              qty)
+{
+    const ItemDef* def = item_find(item_id);
+
+    InteractablePrompt pr{};
+    char label[sizeof(pr.label)]{};
+    std::snprintf(
+        label,
+        sizeof(label),
+        "Coger %s x%u",
+        (def != nullptr) ? def->name : "item",
+        qty);
+    copy_prompt(pr.label, sizeof(pr.label), label);
+
+    ItemPickup pickup{};
+    pickup.item_id = item_id;
+    pickup.qty     = qty;
+
+    const ecs::Position pos{position.x, position.y, position.z};
+    flecs::entity e = world.entity()
+                          .set<ItemPickup>(pickup)
+                          .set<InteractablePrompt>(pr)
+                          .set<ecs::Position>(pos)
+                          .set<ecs::PreviousPosition>({pos.x, pos.y, pos.z})
+                          .set<ecs::Velocity>({0.f, 0.f, 0.f})
+                          .set<ecs::Scale>({0.35f})
+                          .add<Interactable>()
+                          .add<ecs::InstanceTag>();
+    return e;
+}
+
 flecs::entity spawn_turret_seat(
     flecs::world&    world,
     flecs::entity_t  ship,
@@ -1028,6 +1244,24 @@ flecs::entity spawn_station_interactable(
         .set<ecs::Scale>({0.6f})
         .add<Interactable>()
         .add<ecs::InstanceTag>();
+}
+
+void fill_inventory_telemetry(flecs::world& world, InventoryTelemetry& out)
+{
+    out = InventoryTelemetry{};
+    world.each([&](flecs::entity e, const Inventory& inv, const EquippedItem& gun) {
+        if (out.found || !e.has<PlayerCharacter>()) {
+            return;
+        }
+        out.found = true;
+        const ItemDef* def = item_find(gun.item_id);
+        copy_prompt(
+            out.weapon_name,
+            sizeof(out.weapon_name),
+            (def != nullptr) ? def->name : "(sin arma)");
+        out.medkits    = inventory_count(inv, kItemMedkit);
+        out.ammo_packs = inventory_count(inv, kItemAmmoPack);
+    });
 }
 
 void fill_player_telemetry(
