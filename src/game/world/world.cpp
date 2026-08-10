@@ -305,7 +305,7 @@ void fixed_step(flecs::world& world, f32 /*dt*/)
 
 void star_system_set_placeholders(StarSystemData& out)
 {
-    out = {};
+    out = StarSystemData{};
     copy_fixed(out.system_name, sizeof(out.system_name), "Sistema-01");
 
     // Star at origin of the system.
