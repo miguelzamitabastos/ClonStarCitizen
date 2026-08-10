@@ -22,6 +22,7 @@
 #include "game/world/world.hpp"
 
 #include <chrono>
+#include <cstdio>
 
 namespace {
 
@@ -351,6 +352,20 @@ int main(int argc, char** argv)
             ui_stats.eva,
             char_found);
         ui_stats.has_character_telemetry = char_found;
+
+        game::economy::EconomyDebugSnapshot eco{};
+        game::economy::fill_economy_telemetry(world, eco);
+        ui_stats.has_economy_telemetry = eco.has_data;
+        ui_stats.credits               = eco.credits;
+        ui_stats.cargo_units           = eco.cargo_units;
+        ui_stats.active_missions       = eco.active_missions;
+        std::snprintf(
+            ui_stats.cargo_summary, sizeof(ui_stats.cargo_summary), "%s", eco.cargo_summary);
+        std::snprintf(
+            ui_stats.mission_summary,
+            sizeof(ui_stats.mission_summary),
+            "%s",
+            eco.mission_summary);
 
         bool world_found = false;
         game::world::fill_world_telemetry(world, ui_stats.rebase_count, world_found);

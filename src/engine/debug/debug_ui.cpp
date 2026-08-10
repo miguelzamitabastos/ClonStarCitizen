@@ -268,6 +268,14 @@ void debug_ui_build(DebugUiState& state, const DebugUiStats& stats)
             ImGui::Text("Grounded: %s", stats.grounded ? "yes" : "no");
             ImGui::Text("EVA: %s", stats.eva ? "yes" : "no");
         }
+        if (stats.has_economy_telemetry) {
+            ImGui::Separator();
+            ImGui::Text("— Economy —");
+            ImGui::Text("Credits: %d", stats.credits);
+            ImGui::Text("Cargo units: %u", stats.cargo_units);
+            ImGui::Text("Cargo: %s", stats.cargo_summary);
+            ImGui::Text("Missions: %u (%s)", stats.active_missions, stats.mission_summary);
+        }
         ImGui::Separator();
         ImGui::Text("— World (P1D) —");
         ImGui::Text("Floating-origin rebases: %u", stats.rebase_count);

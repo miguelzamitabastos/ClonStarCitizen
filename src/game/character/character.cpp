@@ -2,6 +2,7 @@
 
 #include "engine/ecs/world.hpp"
 #include "engine/log/log.hpp"
+#include "game/economy/economy.hpp"
 #include "game/flight/flight.hpp"
 
 #include <algorithm>

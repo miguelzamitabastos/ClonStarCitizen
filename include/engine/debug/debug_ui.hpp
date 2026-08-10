@@ -48,6 +48,14 @@ struct DebugUiStats {
     u32  ammo_max                = 0;
     bool grounded                = false;
     bool eva                     = false;
+
+    /// Economy telemetry (P1C) — shown when has_economy_telemetry is true.
+    bool has_economy_telemetry = false;
+    i32  credits               = 0;
+    u32  cargo_units           = 0;
+    u32  active_missions       = 0;
+    char cargo_summary[64]{};
+    char mission_summary[48]{};
 };
 
 /// ImGui overlay state — plain POD + Vulkan resources owned here.

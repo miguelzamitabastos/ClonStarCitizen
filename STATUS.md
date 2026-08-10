@@ -25,7 +25,15 @@
   - [x] P1B-07 Interacción raycast + Interactable / InteractEventQueue
   - [x] P1B-08 Interior nave: LocalToShip (sim local; world Pose solo render)
   - [x] P1B-09 Escena `on_foot_test` (interior → EVA → estación)
-- P1C Economía/Misiones:  [.......] 0/8  tareas
+- P1C Economía/Misiones:  [########] 8/8  tareas — COMPLETADA (sin P1C-08; serialización → 1F)
+  - [x] P1C-01 Commodity/Market tablas desde `assets/data/*.cfg` (fixed arrays)
+  - [x] P1C-02 CargoHold slots fijos + volume/mass capacity
+  - [x] P1C-03 buy/sell puros + precio oferta/demanda `f(base, stock)`
+  - [x] P1C-04 MissionTemplate table + generador LCG al aceptar
+  - [x] P1C-05 MissionActive Pool + accept/complete + recompensa
+  - [x] P1C-06 NPCs TradeOffer/Dialogue/TravelPad vía Interactable
+  - [x] P1C-07 FactionReputation float[kNumFactions]
+  - [x] P1C-09 Escena `economy_test` (buy A → travel B → sell/turn-in)
 - P1D Universo fijo:      [########] 8/8  tareas — COMPLETADA (P1D-04 naming parcial)
   - [x] P1D-01 Esquema coordenadas: **floating origin** (f32 relativo; sin f64 mundo)
   - [x] P1D-07 Rebase FloatingOrigin cuando |player| > threshold
@@ -44,7 +52,7 @@
 | `grid_freelook` / `instancing_stress` / `mesh_viewer` | Fase 0 OK |
 | `flight_test` | P1A OK — nave + objetivo a 50m |
 | `on_foot_test` | P1B OK — interior LocalToShip → hatch EVA → estación + FPS target |
-| `economy_test` | pendiente P1C-09 |
+| `economy_test` | P1C OK — MarketA cheap ore → TravelPad → MarketB sell/turn-in |
 | `universe_test` | P1D OK — Estacion-Alfa → espacio (rebase ≥1) → Planeta-01-LZ |
 | `ui_audio_test` | pendiente P1E-07 |
 | `save_load_test` | pendiente P1F-06 |
@@ -81,6 +89,7 @@ Cuando una entidad lleva `LocalToShip { ship_entity, local_position, local_orien
 5. Al salir (quitar `LocalToShip`), se bakea la pose mundial y la sim pasa a espacio mundo / GravityZone.
 
 ## Bitácora (más reciente arriba, una línea por tarea)
+- 2026-08-10 [P1C-01..07,09] Economy: cfg Commodity/Market/MissionTemplate; CargoHold+Wallet; buy/sell supply curve; MissionActive Pool; FactionReputation; NPC Interact; `--scene=economy_test`. Load-time parsers only (no heap in loop).
 - 2026-08-10 [P1D-01..08] Floating origin (threshold 2000 m); StarSystemData+cfg placeholders; LevelStreamTrigger soft load; station LocalToShip+GravityZone; landing LZ; `--scene=universe_test`; debug rebase_count.
 - 2026-08-10 [P1B-01..09] Character: kinematic capsule + GravityZone/EVA; LocalToShip interior; OnFoot cam 1st/3rd; hatch/pilot Interact; FPS→DamageEvent+Health; scene `--scene=on_foot_test`; `game::fixed_step` = character then flight.
 - 2026-08-10 [P1A-01..10] Flight: RigidBody6DOF mass=45t, main thrust 320kN, coupled brake 280kN; projectile pool 32; target @ z=-50; scene `--scene=flight_test`. Engine: Orientation, KinematicFromRigidBody, FixedStepHook, ControlMode, Actions Roll/ToggleCoupled.

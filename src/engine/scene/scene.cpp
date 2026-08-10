@@ -2,6 +2,7 @@
 
 #include "engine/log/log.hpp"
 #include "game/character/character.hpp"
+#include "game/economy/economy.hpp"
 #include "game/flight/flight.hpp"
 #include "game/world/world.hpp"
 
@@ -140,6 +141,20 @@ bool setup_on_foot_test(SceneContext& ctx)
     return true;
 }
 
+bool setup_economy_test(SceneContext& ctx)
+{
+    if (ctx.world == nullptr) {
+        return false;
+    }
+    if (!game::economy::setup_economy_test_scene(*ctx.world, ctx.aspect)) {
+        return false;
+    }
+    ctx.needs_shared_mesh = true;
+    // 2 decks + ship + player + 2 traders + 2 mission NPCs + 2 pads + projectiles
+    ctx.instance_count = 10u + static_cast<u32>(game::flight::kProjectilePoolSize);
+    return true;
+}
+
 bool setup_universe_test(SceneContext& ctx)
 {
     if (ctx.world == nullptr) {
@@ -176,6 +191,9 @@ constexpr SceneDesc kScenes[] = {
     {"on_foot_test",
      "Ship interior → EVA → station gravity + FPS combat (P1B)",
      &setup_on_foot_test},
+    {"economy_test",
+     "Buy ore@A → travel B → sell margin + delivery mission (P1C)",
+     &setup_economy_test},
     {"universe_test",
      "Fixed star system: station ↔ open space (rebase) ↔ planetary LZ (P1D)",
      &setup_universe_test},

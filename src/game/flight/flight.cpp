@@ -3,6 +3,7 @@
 #include "engine/ecs/world.hpp"
 #include "engine/log/log.hpp"
 #include "game/character/character.hpp"
+#include "game/economy/economy.hpp"
 
 #include <algorithm>
 #include <cmath>
