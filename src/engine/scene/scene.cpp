@@ -59,8 +59,8 @@ bool setup_flight_test(SceneContext& ctx)
 
     // Ship at (0,5,0); static asteroid ~50m ahead along -Z (ship forward).
     game::flight::spawn_projectile_pool(*ctx.world);
-    game::flight::spawn_player_ship(*ctx.world, glm::vec3{0.f, 5.f, 0.f});
-    game::flight::spawn_damage_target(*ctx.world, glm::vec3{0.f, 5.f, -50.f}, 5.f);
+    (void)game::flight::spawn_player_ship(*ctx.world, glm::vec3{0.f, 5.f, 0.f});
+    (void)game::flight::spawn_damage_target(*ctx.world, glm::vec3{0.f, 5.f, -50.f}, 5.f);
 
     ctx.world->set<ecs::ControlMode>({ecs::ControlModeKind::ShipPilot});
 

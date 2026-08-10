@@ -311,7 +311,7 @@ void try_fire_mount(
         const flecs::entity_t hit =
             raycast_hull(targets, target_count, ship.id(), muzzle, dir, w.range);
         if (hit != 0 && dmg_q != nullptr) {
-            dmg_q->push(combat::DamageEvent{hit, ship.id(), w.damage});
+            (void)dmg_q->push(combat::DamageEvent{hit, ship.id(), w.damage});
         }
         return;
     }
@@ -389,7 +389,7 @@ void step_projectiles(
         }
 
         if (hit && dmg_q != nullptr) {
-            dmg_q->push(combat::DamageEvent{hit_target, proj.source, proj.damage});
+            (void)dmg_q->push(combat::DamageEvent{hit_target, proj.source, proj.damage});
         }
 
         if (hit || proj.life_remaining <= 0.f) {
@@ -695,7 +695,8 @@ void register_systems(flecs::world& world)
     world.system("ShipChaseCameraSystem")
         .kind(flecs::OnUpdate)
         .run([](flecs::iter& it) {
-            update_chase_camera(it.world());
+            flecs::world w = it.world();
+            update_chase_camera(w);
         });
 }
 
