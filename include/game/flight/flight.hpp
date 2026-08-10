@@ -48,6 +48,40 @@ struct ShipHull {
     f32 radius = 3.f;
 };
 
+// --- P2-02: independently damageable subsystems --------------------------------
+
+/// Fraction of a subsystem-targeted hit that bleeds through into hull HP.
+inline constexpr f32 kSubsystemHullBleed = 0.35f;
+/// Chance (per hit that got past shields) of striking a concrete subsystem.
+inline constexpr f32 kSubsystemHitChance = 0.6f;
+
+struct SubsystemHealth {
+    f32 max_hp = 100.f;
+    f32 hp     = 100.f;
+};
+
+/// Fixed per-ship subsystem bank, indexed by combat::subsystem_index().
+/// Order: Engines, Shields, Weapons, Sensors.
+struct ShipSubsystems {
+    SubsystemHealth items[combat::kSubsystemCount]{};
+};
+
+/// [0,1] health fraction of a concrete subsystem (None → 1).
+[[nodiscard]] f32 subsystem_efficiency(const ShipSubsystems& subs, combat::Subsystem s);
+
+/// True when the subsystem still has HP (None → true).
+[[nodiscard]] bool subsystem_operational(const ShipSubsystems& subs, combat::Subsystem s);
+
+/// Roll a hit location: None (pure hull) or one of the 4 subsystems (P2-02).
+[[nodiscard]] combat::Subsystem roll_hit_subsystem(u32& rng_state);
+
+/// Per-subsystem HUD snapshot for the first PlayerShip (P2-02 DoD).
+struct SubsystemTelemetry {
+    bool found = false;
+    /// [0,1] per combat::subsystem_index() order: ENG, SHD, WPN, SEN.
+    f32 efficiency[combat::kSubsystemCount]{};
+};
+
 struct Thruster {
     glm::vec3 relative_pos{0.f}; // body space, from CoM
     glm::vec3 direction{0.f, 0.f, -1.f}; // body space unit
@@ -147,6 +181,9 @@ void map_flight_control_to_thrusters(
 
 /// Pre-spawn inactive projectile entities into ProjectilePool singleton (level load).
 void spawn_projectile_pool(flecs::world& world);
+
+/// Fill per-subsystem HUD state from the first PlayerShip (P2-02).
+void fill_player_subsystem_telemetry(flecs::world& world, SubsystemTelemetry& out);
 
 /// Fill debug overlay fields from the first PlayerShip (if any).
 void fill_player_telemetry(

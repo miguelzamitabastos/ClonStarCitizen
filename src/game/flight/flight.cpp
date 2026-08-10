@@ -72,6 +72,28 @@ void build_default_thruster_set(ThrusterSet& set)
     return glm::conjugate(q) * v;
 }
 
+/// Build the DamageEvent for a weapon hit; rolls a hit-location subsystem
+/// (P2-02) when the target carries ShipSubsystems.
+[[nodiscard]] combat::DamageEvent make_weapon_hit_event(
+    flecs::world&   world,
+    flecs::entity_t target,
+    flecs::entity_t source,
+    f32             damage)
+{
+    combat::DamageEvent ev{};
+    ev.target = target;
+    ev.source = source;
+    ev.amount = damage;
+
+    flecs::entity te = world.entity(target);
+    if (te.is_alive() && te.has<ShipSubsystems>()) {
+        if (combat::CombatRng* rng = world.try_get_mut<combat::CombatRng>()) {
+            ev.subsystem = roll_hit_subsystem(rng->state);
+        }
+    }
+    return ev;
+}
+
 u32 collect_hull_targets(flecs::world& world, HullTarget* out, u32 capacity)
 {
     u32 n = 0;
@@ -314,7 +336,7 @@ void try_fire_mount(
         const flecs::entity_t hit =
             raycast_hull(targets, target_count, ship.id(), muzzle, dir, w.range);
         if (hit != 0 && dmg_q != nullptr) {
-            (void)dmg_q->push(combat::DamageEvent{hit, ship.id(), w.damage});
+            (void)dmg_q->push(make_weapon_hit_event(world, hit, ship.id(), w.damage));
         }
         return;
     }
@@ -395,7 +417,8 @@ void step_projectiles(
         }
 
         if (hit && dmg_q != nullptr) {
-            (void)dmg_q->push(combat::DamageEvent{hit_target, proj.source, proj.damage});
+            (void)dmg_q->push(
+                make_weapon_hit_event(world, hit_target, proj.source, proj.damage));
         }
 
         if (hit || proj.life_remaining <= 0.f) {
@@ -452,8 +475,23 @@ void apply_damage_events(flecs::world& world)
                 remaining -= absorbed;
             }
             if (remaining > 0.f) {
+                // P2-02: subsystem-addressed hits split between the subsystem
+                // bank and hull bleed-through; destroyed banks pass all to hull.
+                f32 to_hull = remaining;
+                if (ev.subsystem != combat::Subsystem::None) {
+                    if (ShipSubsystems* subs = target.try_get_mut<ShipSubsystems>()) {
+                        SubsystemHealth& bank =
+                            subs->items[combat::subsystem_index(ev.subsystem)];
+                        if (bank.hp > 0.f) {
+                            const f32 to_subsystem =
+                                remaining * (1.f - kSubsystemHullBleed);
+                            bank.hp = std::max(0.f, bank.hp - to_subsystem);
+                            to_hull = remaining * kSubsystemHullBleed;
+                        }
+                    }
+                }
                 if (ShipHull* hull = target.try_get_mut<ShipHull>()) {
-                    hull->hp = std::max(0.f, hull->hp - remaining);
+                    hull->hp = std::max(0.f, hull->hp - to_hull);
                     if (hull->hp <= 0.f && destroyed_count < kMaxHullTargets) {
                         newly_destroyed[destroyed_count++] = target.id();
                     }
@@ -548,6 +586,34 @@ void cleanup_destroyed(flecs::world& world)
 }
 
 }  // namespace
+
+f32 subsystem_efficiency(const ShipSubsystems& subs, combat::Subsystem s)
+{
+    if (s == combat::Subsystem::None) {
+        return 1.f;
+    }
+    const SubsystemHealth& h = subs.items[combat::subsystem_index(s)];
+    return (h.max_hp > 1e-3f) ? clampf(h.hp / h.max_hp, 0.f, 1.f) : 0.f;
+}
+
+bool subsystem_operational(const ShipSubsystems& subs, combat::Subsystem s)
+{
+    if (s == combat::Subsystem::None) {
+        return true;
+    }
+    return subs.items[combat::subsystem_index(s)].hp > 0.f;
+}
+
+combat::Subsystem roll_hit_subsystem(u32& rng_state)
+{
+    const u32 roll = combat::rng_next(rng_state) >> 8; // drop low-quality LCG bits
+    const f32 unit = static_cast<f32>(roll % 10000u) / 10000.f;
+    if (unit >= kSubsystemHitChance) {
+        return combat::Subsystem::None;
+    }
+    const u32 pick = (combat::rng_next(rng_state) >> 8) % combat::kSubsystemCount;
+    return static_cast<combat::Subsystem>(pick + 1u);
+}
 
 void map_actions_to_flight_control(
     const input::ActionState& in, FlightControl& ctrl, f32 look_torque_scale)
@@ -683,10 +749,24 @@ void fixed_step(flecs::world& world, f32 dt)
 
         distribute_power(plant, dt);
 
+        // P2-02: subsystem damage degrades the pillar it belongs to.
+        const ShipSubsystems* subs = e.try_get<ShipSubsystems>();
+        const f32             eng_eff = (subs != nullptr)
+            ? subsystem_efficiency(*subs, combat::Subsystem::Engines)
+            : 1.f;
+        const f32 shd_eff = (subs != nullptr)
+            ? subsystem_efficiency(*subs, combat::Subsystem::Shields)
+            : 1.f;
+
         if (ShieldGenerator* shield = e.try_get_mut<ShieldGenerator>()) {
-            apply_shield_regen(*shield, plant.frac_shields, dt);
-            plant.stored = std::max(
-                0.f, plant.stored - shield->power_draw * plant.frac_shields * dt * 0.25f);
+            if (shd_eff <= 0.f) {
+                shield->current = 0.f; // generator destroyed — no absorption at all
+            } else {
+                apply_shield_regen(*shield, plant.frac_shields * shd_eff, dt);
+                plant.stored = std::max(
+                    0.f,
+                    plant.stored - shield->power_draw * plant.frac_shields * dt * 0.25f);
+            }
         }
 
         // Unpiloted player ship coasts (no thruster wrench) so LocalToShip interiors move.
@@ -705,8 +785,9 @@ void fixed_step(flecs::world& world, f32 dt)
 
         glm::vec3 force_body{};
         glm::vec3 torque_body{};
-        accumulate_thruster_wrench(thrusters, plant.frac_thrusters, force_body, torque_body);
-        torque_body += ctrl.torque_input * kMaxTorqueNm * plant.frac_thrusters;
+        accumulate_thruster_wrench(
+            thrusters, plant.frac_thrusters * eng_eff, force_body, torque_body);
+        torque_body += ctrl.torque_input * kMaxTorqueNm * plant.frac_thrusters * eng_eff;
 
         const glm::vec3 force_world  = body_to_world(rb.orientation, force_body);
         const glm::vec3 torque_world = body_to_world(rb.orientation, torque_body);
@@ -738,6 +819,12 @@ void fixed_step(flecs::world& world, f32 dt)
         if (!fire_held || e.has<Destroyed>() || !e.has<PlayerShip>()) {
             return;
         }
+        // P2-02: destroyed weapons bank keeps all mounts offline.
+        if (const ShipSubsystems* subs = e.try_get<ShipSubsystems>()) {
+            if (!subsystem_operational(*subs, combat::Subsystem::Weapons)) {
+                return;
+            }
+        }
         for (u32 i = 0; i < weapons.count; ++i) {
             try_fire_mount(
                 world, e, rb, plant, weapons.mounts[i], targets, target_count, dmg_q, pool);
@@ -753,6 +840,9 @@ void register_systems(flecs::world& world)
 {
     if (world.try_get<combat::DamageEventQueue>() == nullptr) {
         world.set<combat::DamageEventQueue>(combat::DamageEventQueue{});
+    }
+    if (world.try_get<combat::CombatRng>() == nullptr) {
+        world.set<combat::CombatRng>(combat::CombatRng{});
     }
     if (world.try_get<ecs::ControlMode>() == nullptr) {
         world.set<ecs::ControlMode>(ecs::ControlMode{});
@@ -805,6 +895,13 @@ flecs::entity spawn_player_ship(flecs::world& world, const glm::vec3& position)
     FlightControl ctrl{};
     ctrl.coupled = true;
 
+    // P2-02: independently damageable banks (ENG / SHD / WPN / SEN).
+    ShipSubsystems subsystems{};
+    subsystems.items[combat::subsystem_index(combat::Subsystem::Engines)] = {300.f, 300.f};
+    subsystems.items[combat::subsystem_index(combat::Subsystem::Shields)] = {250.f, 250.f};
+    subsystems.items[combat::subsystem_index(combat::Subsystem::Weapons)] = {200.f, 200.f};
+    subsystems.items[combat::subsystem_index(combat::Subsystem::Sensors)] = {150.f, 150.f};
+
     const ecs::Position pos{position.x, position.y, position.z};
 
     flecs::entity ship =
@@ -814,6 +911,7 @@ flecs::entity spawn_player_ship(flecs::world& world, const glm::vec3& position)
             .set<PowerPlant>(plant)
             .set<ShieldGenerator>(shield)
             .set<ShipHull>(hull)
+            .set<ShipSubsystems>(subsystems)
             .set<WeaponMountSet>(weapons)
             .set<FlightControl>(ctrl)
             .set<ecs::Position>(pos)
@@ -849,8 +947,16 @@ flecs::entity spawn_damage_target(flecs::world& world, const glm::vec3& position
 
     const ecs::Position pos{position.x, position.y, position.z};
 
+    // P2-02: targets expose subsystem banks so hits can disable them one by one.
+    ShipSubsystems subsystems{};
+    subsystems.items[combat::subsystem_index(combat::Subsystem::Engines)] = {120.f, 120.f};
+    subsystems.items[combat::subsystem_index(combat::Subsystem::Shields)] = {100.f, 100.f};
+    subsystems.items[combat::subsystem_index(combat::Subsystem::Weapons)] = {80.f, 80.f};
+    subsystems.items[combat::subsystem_index(combat::Subsystem::Sensors)] = {60.f, 60.f};
+
     flecs::entity target = world.entity("DamageTarget")
                                .set<ShipHull>(hull)
+                               .set<ShipSubsystems>(subsystems)
                                .set<ecs::Position>(pos)
                                .set<ecs::PreviousPosition>({pos.x, pos.y, pos.z})
                                .set<ecs::Velocity>({0.f, 0.f, 0.f})
@@ -893,6 +999,21 @@ void spawn_projectile_pool(flecs::world& world)
     if (world.try_get<combat::DamageEventQueue>() == nullptr) {
         world.set<combat::DamageEventQueue>(combat::DamageEventQueue{});
     }
+}
+
+void fill_player_subsystem_telemetry(flecs::world& world, SubsystemTelemetry& out)
+{
+    out = SubsystemTelemetry{};
+    world.each([&](flecs::entity e, const ShipSubsystems& subs) {
+        if (out.found || !e.has<PlayerShip>()) {
+            return;
+        }
+        out.found = true;
+        for (u32 i = 0; i < combat::kSubsystemCount; ++i) {
+            out.efficiency[i] =
+                subsystem_efficiency(subs, static_cast<combat::Subsystem>(i + 1u));
+        }
+    });
 }
 
 void fill_player_telemetry(

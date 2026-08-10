@@ -1,6 +1,42 @@
 # STATUS
 
-## Fase activa: Fase 1 — Vertical Slice — **COMPLETADA** (PARADA: validación física)
+## Fase activa: Fase 2 — Profundidad de Sistemas (rama `release/fase-2-profundidad-de-sistemas`)
+
+Fase 1 validada físicamente por el usuario (2026-08-10) — apertura de Fase 2.
+
+## Progreso Fase 2
+- Naves y vuelo (P2-01..04):   [.] 0/4
+  - [ ] P2-01 Tripulación NPC (artillero / ingeniero) con asiento fijo LocalToShip
+  - [x] P2-02 Daño por componente (ENG/SHD/WPN/SEN) vía DamageEvent.subsystem
+  - [ ] P2-03 Torretas giratorias (IA o jugador) con arco de disparo
+  - [ ] P2-04 Modelo de vuelo atmosférico vs vacío (arrastre + sustentación)
+- A pie (P2-05..07):           [.] 0/3
+  - [ ] P2-05 Inventario completo (slots equipo, recogibles, uso de items)
+  - [ ] P2-06 IA combate a pie (detección, cobertura, disparo) sobre P2-11
+  - [ ] P2-07 Daño por zona (torso/extremidad) + muerte/reaparición jugador
+- Economía y misiones (P2-08..10): [.] 0/3
+  - [ ] P2-08 Simulación económica dinámica (producción/consumo, eventos de precio)
+  - [ ] P2-09 Misiones encadenadas con ramificación simple
+  - [ ] P2-10 Misiones combate/escolta reutilizando IA P2-03/P2-06
+- IA y facciones (P2-11..12):  [.] 0/2
+  - [ ] P2-11 Framework de IA compartido (FSM patrulla/alerta/combate/huida + hostilidad por reputación)
+  - [ ] P2-12 Encuentros aleatorios por proximidad desde Pool
+- Mundo (P2-13):               [.] 0/1
+  - [ ] P2-13 Más localizaciones en el sistema fijo (esquema P1D-02)
+
+## Decisiones Fase 2 (documentadas)
+1. **P2-02 subsistemas:** 4 bancos fijos por nave (`ShipSubsystems`): Engines 300 HP,
+   Shields 250, Weapons 200, Sensors 150 (jugador). `DamageEvent` gana campo
+   `subsystem` (enum `combat::Subsystem`, `None` = casco puro — cero tipos de evento
+   nuevos). Tras absorción de escudo: 60% de los impactos de arma eligen subsistema
+   (LCG `CombatRng` singleton, determinista); el subsistema recibe 65% y el casco 35%
+   (bleed-through). Efectos: ENG escala empuje/torque linealmente con HP; SHD a 0 →
+   escudo forzado a 0 sin regen; WPN a 0 → todos los montajes offline; SEN reservado
+   para detección IA (P2-11) y HUD. HUD vuelo muestra ENG/SGN/WPN/SEN u OFFLINE.
+   El formato de guardado v1 NO serializa subsistemas todavía (decisión: bump de
+   schema al cerrar más componentes de Fase 2, una sola migración).
+
+## Fase 1 — Vertical Slice — **COMPLETADA y validada** (histórico)
 
 ## Cierre Fase 1 — resumen del bucle jugable
 
@@ -143,6 +179,10 @@ Cuando una entidad lleva `LocalToShip { ship_entity, local_position, local_orien
 5. Al salir (quitar `LocalToShip`), se bakea la pose mundial y la sim pasa a espacio mundo / GravityZone.
 
 ## Bitácora (más reciente arriba, una línea por tarea)
+- 2026-08-10 [P2-02] Daño por componente: ShipSubsystems (4 bancos POD), DamageEvent.subsystem,
+  roll de localización LCG, degradación ENG/SHD/WPN en fixed_step, HUD por subsistema.
+  Siguiente (P2-11) necesita SEN para radio de detección IA.
+- 2026-08-10 Fase 1 validada por usuario. Apertura Fase 2 — rama `release/fase-2-profundidad-de-sistemas`.
 - 2026-08-10 [P1F-01..06] Binary save schema v1 + PersistentId; slots/quicksave; save_load_test; CSC_SAVE_SMOKE; Fase 1 COMPLETADA — PARADA validación física.
 - 2026-08-10 [P1E-01..07] UI=ImGui (Fase 6 rework); HUD flight/on-foot; pause+menus; miniaudio voice pool 16 + SFX/Music/UI buses; `--scene=ui_audio_test`.
 - 2026-08-10 [P1C-01..07,09] Economy: cfg Commodity/Market/MissionTemplate; CargoHold+Wallet; buy/sell supply curve; MissionActive Pool; FactionReputation; NPC Interact; `--scene=economy_test`. Load-time parsers only (no heap in loop).
