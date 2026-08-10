@@ -1,6 +1,7 @@
 #include "engine/scene/scene.hpp"
 
 #include "engine/log/log.hpp"
+#include "game/flight/flight.hpp"
 
 #include <cstdio>
 #include <cstring>
@@ -47,6 +48,29 @@ bool setup_mesh_viewer(SceneContext& ctx)
     return true;
 }
 
+bool setup_flight_test(SceneContext& ctx)
+{
+    if (ctx.world == nullptr) {
+        return false;
+    }
+
+    ecs::world_spawn_default_camera(*ctx.world, ctx.aspect);
+    ecs::world_spawn_default_grid(*ctx.world);
+
+    // Ship at (0,5,0); static asteroid ~50m ahead along -Z (ship forward).
+    game::flight::spawn_projectile_pool(*ctx.world);
+    game::flight::spawn_player_ship(*ctx.world, glm::vec3{0.f, 5.f, 0.f});
+    game::flight::spawn_damage_target(*ctx.world, glm::vec3{0.f, 5.f, -50.f}, 5.f);
+
+    ctx.world->set<ecs::ControlMode>({ecs::ControlModeKind::ShipPilot});
+
+    ctx.needs_shared_mesh = true;
+    // Player + target + up to kProjectilePoolSize when firing (capacity for gather).
+    ctx.instance_count =
+        2u + static_cast<u32>(game::flight::kProjectilePoolSize);
+    return true;
+}
+
 constexpr SceneDesc kScenes[] = {
     {"grid_freelook",
      "Free-look camera + ground grid (minimal baseline)",
@@ -57,6 +81,9 @@ constexpr SceneDesc kScenes[] = {
     {"mesh_viewer",
      "Single centered cube mesh + free-look (glTF upload check)",
      &setup_mesh_viewer},
+    {"flight_test",
+     "Pilotable ship + thrusters/shields/weapons + damage target (P1A)",
+     &setup_flight_test},
 };
 
 constexpr std::size_t kSceneCount = sizeof(kScenes) / sizeof(kScenes[0]);

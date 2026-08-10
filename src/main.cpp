@@ -73,6 +73,7 @@ int main(int argc, char** argv)
     flecs::world world{};
     ecs::world_register_systems(world);
     register_game_systems(world);
+    ecs::world_set_fixed_step_hook(&game::flight::fixed_step);
 
     ecs::FrameTimeState frame_time{};
     const f32 physics_hz =
@@ -324,6 +325,19 @@ int main(int argc, char** argv)
         ui_stats.cam_x          = camera_scratch.eye.x;
         ui_stats.cam_y          = camera_scratch.eye.y;
         ui_stats.cam_z          = camera_scratch.eye.z;
+
+        bool ship_found = false;
+        game::flight::fill_player_telemetry(
+            world,
+            ui_stats.speed,
+            ui_stats.energy,
+            ui_stats.energy_capacity,
+            ui_stats.shield_pct,
+            ui_stats.hull_hp,
+            ui_stats.hull_max_hp,
+            ui_stats.coupled,
+            ship_found);
+        ui_stats.has_ship_telemetry = ship_found;
 
         debug::DebugUiState* ui_ptr = debug_ui.ready ? &debug_ui : nullptr;
         if (ui_ptr != nullptr) {

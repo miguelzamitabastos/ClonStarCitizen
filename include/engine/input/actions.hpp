@@ -15,6 +15,9 @@ enum class Action : u16 {
     Fire,
     Interact,
     Thrust,
+    ToggleCoupled,
+    RollLeft,
+    RollRight,
     Count
 };
 

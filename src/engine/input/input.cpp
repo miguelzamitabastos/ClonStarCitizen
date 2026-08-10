@@ -65,6 +65,11 @@ void input_set_default_bindings(InputSystem& sys)
     add_binding(sys, BindingDevice::MouseButton, GLFW_MOUSE_BUTTON_LEFT, Action::Fire);
     add_binding(sys, BindingDevice::Keyboard, GLFW_KEY_F, Action::Interact);
     add_binding(sys, BindingDevice::Keyboard, GLFW_KEY_LEFT_SHIFT, Action::Thrust);
+
+    // Flight: Z/X roll, Left Alt toggles coupled mode (Q/E remain vertical).
+    add_binding(sys, BindingDevice::Keyboard, GLFW_KEY_Z, Action::RollLeft);
+    add_binding(sys, BindingDevice::Keyboard, GLFW_KEY_X, Action::RollRight);
+    add_binding(sys, BindingDevice::Keyboard, GLFW_KEY_LEFT_ALT, Action::ToggleCoupled);
 }
 
 void input_set_config(InputSystem& sys, const InputConfig& config)

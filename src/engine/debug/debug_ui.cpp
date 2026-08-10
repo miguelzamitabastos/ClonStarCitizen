@@ -242,6 +242,24 @@ void debug_ui_build(DebugUiState& state, const DebugUiStats& stats)
             static_cast<double>(stats.cam_x),
             static_cast<double>(stats.cam_y),
             static_cast<double>(stats.cam_z));
+        if (stats.has_ship_telemetry || stats.hull_hp >= 0.f) {
+            ImGui::Separator();
+            ImGui::Text("— Flight —");
+            ImGui::Text("Speed: %.1f m/s", static_cast<double>(stats.speed));
+            ImGui::Text(
+                "Energy: %.0f / %.0f",
+                static_cast<double>(stats.energy),
+                static_cast<double>(stats.energy_capacity));
+            ImGui::Text("Shield: %.0f%%", static_cast<double>(stats.shield_pct * 100.f));
+            ImGui::Text(
+                "Hull: %.0f / %.0f",
+                static_cast<double>(stats.hull_hp),
+                static_cast<double>(stats.hull_max_hp));
+            ImGui::Text("Coupled: %s", stats.coupled ? "ON" : "OFF");
+            if (stats.rebase_count > 0) {
+                ImGui::Text("Rebase count: %u", stats.rebase_count);
+            }
+        }
         ImGui::Separator();
         ImGui::Text("F1: %s cursor for UI", state.cursor_for_ui ? "unlock" : "lock");
         ImGui::Text(

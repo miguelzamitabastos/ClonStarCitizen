@@ -28,6 +28,17 @@ struct DebugUiStats {
     f32  cam_x          = 0.f;
     f32  cam_y          = 0.f;
     f32  cam_z          = 0.f;
+
+    /// Flight telemetry (P1A) — shown when has_ship_telemetry is true.
+    bool has_ship_telemetry = false;
+    f32  speed              = 0.f;
+    f32  energy             = 0.f;
+    f32  energy_capacity    = 0.f;
+    f32  shield_pct         = 0.f;
+    f32  hull_hp            = -1.f;
+    f32  hull_max_hp        = 0.f;
+    bool coupled            = false;
+    u32  rebase_count       = 0; // reserved for Fase 1D floating origin
 };
 
 /// ImGui overlay state — plain POD + Vulkan resources owned here.
