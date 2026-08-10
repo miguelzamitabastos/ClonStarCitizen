@@ -824,6 +824,8 @@ flecs::entity spawn_player_ship(flecs::world& world, const glm::vec3& position)
             .add<ecs::KinematicFromRigidBody>()
             .add<PlayerShip>();
 
+    economy::attach_cargo_hold_if_missing(ship);
+
     log::log_info(
         log::LogCategory::Core,
         "Spawned player ship at (%.1f, %.1f, %.1f) mass=%.0f thrusters=%u",

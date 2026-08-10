@@ -381,6 +381,11 @@ void handle_interact_events(flecs::world& world)
             continue;
         }
 
+        // Economy NPCs (TradeOffer / Dialogue / TravelPad) — P1C-06.
+        if (economy::handle_interact(world, ev.actor, ev.target)) {
+            continue;
+        }
+
         // Generic interactable — event already published; log for demo terminals.
         if (const InteractablePrompt* pr = target.try_get<InteractablePrompt>()) {
             log::log_info(log::LogCategory::Core, "Interact: %s", pr->label);
