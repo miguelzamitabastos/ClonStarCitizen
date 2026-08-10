@@ -2,6 +2,7 @@
 
 #include "engine/ecs/world.hpp"
 #include "engine/log/log.hpp"
+#include "game/character/character.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -426,6 +427,8 @@ void apply_damage_events(flecs::world& world)
 
     flecs::entity_t newly_destroyed[kMaxHullTargets]{};
     u32             destroyed_count = 0;
+    flecs::entity_t newly_dead[character::kMaxHealthTargets]{};
+    u32             dead_count = 0;
 
     combat::DamageEvent ev{};
     while (q->try_pop(ev)) {
@@ -433,23 +436,36 @@ void apply_damage_events(flecs::world& world)
             continue;
         }
         flecs::entity target = world.entity(ev.target);
-        if (!target.is_alive() || target.has<Destroyed>()) {
+        if (!target.is_alive()) {
             continue;
         }
 
+        // Shared DamageEvent → ShipHull (P1A) and/or Health (P1B).
         f32 remaining = ev.amount;
-        if (ShieldGenerator* shield = target.try_get_mut<ShieldGenerator>()) {
-            const f32 absorbed = std::min(shield->current, remaining);
-            shield->current -= absorbed;
-            remaining -= absorbed;
+
+        if (!target.has<Destroyed>()) {
+            if (ShieldGenerator* shield = target.try_get_mut<ShieldGenerator>()) {
+                const f32 absorbed = std::min(shield->current, remaining);
+                shield->current -= absorbed;
+                remaining -= absorbed;
+            }
+            if (remaining > 0.f) {
+                if (ShipHull* hull = target.try_get_mut<ShipHull>()) {
+                    hull->hp = std::max(0.f, hull->hp - remaining);
+                    if (hull->hp <= 0.f && destroyed_count < kMaxHullTargets) {
+                        newly_destroyed[destroyed_count++] = target.id();
+                    }
+                    remaining = 0.f;
+                }
+            }
         }
-        if (remaining <= 0.f) {
-            continue;
-        }
-        if (ShipHull* hull = target.try_get_mut<ShipHull>()) {
-            hull->hp = std::max(0.f, hull->hp - remaining);
-            if (hull->hp <= 0.f && destroyed_count < kMaxHullTargets) {
-                newly_destroyed[destroyed_count++] = target.id();
+
+        if (remaining > 0.f && !target.has<character::CharacterDead>()) {
+            if (character::Health* hp = target.try_get_mut<character::Health>()) {
+                hp->hp = std::max(0.f, hp->hp - remaining);
+                if (hp->hp <= 0.f && dead_count < character::kMaxHealthTargets) {
+                    newly_dead[dead_count++] = target.id();
+                }
             }
         }
     }
@@ -461,6 +477,15 @@ void apply_damage_events(flecs::world& world)
         flecs::entity e = world.entity(newly_destroyed[i]);
         if (e.is_alive() && !e.has<Destroyed>()) {
             e.add<Destroyed>();
+        }
+    }
+    for (u32 i = 0; i < dead_count; ++i) {
+        if (newly_dead[i] == 0) {
+            continue;
+        }
+        flecs::entity e = world.entity(newly_dead[i]);
+        if (e.is_alive() && !e.has<character::CharacterDead>()) {
+            e.add<character::CharacterDead>();
         }
     }
 }
@@ -629,12 +654,16 @@ void fixed_step(flecs::world& world, f32 dt)
         ? (cam_params->mouse_sensitivity * 800.f)
         : kLookTorqueScale;
 
+    const ecs::ControlMode* control_mode = world.try_get<ecs::ControlMode>();
+    const bool ship_pilot =
+        control_mode != nullptr && control_mode->mode == ecs::ControlModeKind::ShipPilot;
+
     if (actions != nullptr) {
         world.each([&](flecs::entity e, FlightControl& ctrl) {
             if (!e.has<PlayerShip>()) {
                 return;
             }
-            if (e.has<Destroyed>()) {
+            if (e.has<Destroyed>() || !ship_pilot) {
                 ctrl.thrust_input = {};
                 ctrl.torque_input = {};
                 return;
@@ -656,6 +685,17 @@ void fixed_step(flecs::world& world, f32 dt)
             apply_shield_regen(*shield, plant.frac_shields, dt);
             plant.stored = std::max(
                 0.f, plant.stored - shield->power_draw * plant.frac_shields * dt * 0.25f);
+        }
+
+        // Unpiloted player ship coasts (no thruster wrench) so LocalToShip interiors move.
+        if (e.has<PlayerShip>() && !ship_pilot) {
+            for (u32 i = 0; i < thrusters.count; ++i) {
+                thrusters.activation[i] = 0.f;
+            }
+            sync_rigid_to_ecs(e, rb, true);
+            integrate_rigid_body(rb, glm::vec3{0.f}, glm::vec3{0.f}, dt);
+            sync_rigid_to_ecs(e, rb, false);
+            return;
         }
 
         const glm::vec3 body_vel = world_to_body(rb.orientation, rb.linear_vel);
@@ -680,8 +720,8 @@ void fixed_step(flecs::world& world, f32 dt)
     combat::DamageEventQueue* dmg_q = world.try_get_mut<combat::DamageEventQueue>();
     ProjectilePool*           pool  = world.try_get_mut<ProjectilePool>();
     const ecs::InputActions*  in    = world.try_get<ecs::InputActions>();
-    const bool fire_held =
-        in != nullptr && in->state.pressed[static_cast<u16>(input::Action::Fire)];
+    const bool fire_held = ship_pilot && in != nullptr
+        && in->state.pressed[static_cast<u16>(input::Action::Fire)];
 
     // Weapon cooldown/heat + fire (separate pass — no nested queries).
     world.each([&](flecs::entity e, RigidBody6DOF& rb, PowerPlant& plant,

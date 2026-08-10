@@ -17,6 +17,7 @@
 #include "game/economy/economy.hpp"
 #include "game/flight/flight.hpp"
 #include "game/save/save.hpp"
+#include "game/tick.hpp"
 #include "game/ui/ui.hpp"
 #include "game/world/world.hpp"
 
@@ -73,7 +74,7 @@ int main(int argc, char** argv)
     flecs::world world{};
     ecs::world_register_systems(world);
     register_game_systems(world);
-    ecs::world_set_fixed_step_hook(&game::flight::fixed_step);
+    ecs::world_set_fixed_step_hook(&game::fixed_step);
 
     ecs::FrameTimeState frame_time{};
     const f32 physics_hz =
@@ -338,6 +339,18 @@ int main(int argc, char** argv)
             ui_stats.coupled,
             ship_found);
         ui_stats.has_ship_telemetry = ship_found;
+
+        bool char_found = false;
+        game::character::fill_player_telemetry(
+            world,
+            ui_stats.health,
+            ui_stats.health_max,
+            ui_stats.ammo,
+            ui_stats.ammo_max,
+            ui_stats.grounded,
+            ui_stats.eva,
+            char_found);
+        ui_stats.has_character_telemetry = char_found;
 
         debug::DebugUiState* ui_ptr = debug_ui.ready ? &debug_ui : nullptr;
         if (ui_ptr != nullptr) {

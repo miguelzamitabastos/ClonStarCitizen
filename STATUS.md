@@ -15,7 +15,16 @@
   - [x] P1A-08 Armas fijas (Pool proyectiles + InstanceTag)
   - [x] P1A-09 Daño casco + tag Destroyed (sin delete mid-iteration)
   - [x] P1A-10 Escena `flight_test` + HUD telemetría
-- P1B A pie y FPS:        [.........] 0/9  tareas
+- P1B A pie y FPS:        [#########] 9/9  tareas — COMPLETADA
+  - [x] P1B-01 Componentes ECS de personaje (CharacterController, Health, EquippedItem, …)
+  - [x] P1B-02 Locomoción kinemática (cápsula) en gravedad de superficie
+  - [x] P1B-03 Zonas de gravedad (GravityZone) + transición EVA
+  - [x] P1B-04 Cámara 1ª/3ª persona (ControlMode::OnFoot; Alt toggle 3ª)
+  - [x] P1B-05 Entrar/salir nave (PilotSeat ↔ ShipPilot/OnFoot; Health persiste)
+  - [x] P1B-06 Combate FPS (EquippedItem → DamageEvent compartido → Health/CharacterDead)
+  - [x] P1B-07 Interacción raycast + Interactable / InteractEventQueue
+  - [x] P1B-08 Interior nave: LocalToShip (sim local; world Pose solo render)
+  - [x] P1B-09 Escena `on_foot_test` (interior → EVA → estación)
 - P1C Economía/Misiones:  [.......] 0/8  tareas
 - P1D Universo fijo:      [........] 0/8  tareas
 - P1E UI/HUD/Audio:       [.......] 0/7  tareas
@@ -26,7 +35,7 @@
 |---|---|
 | `grid_freelook` / `instancing_stress` / `mesh_viewer` | Fase 0 OK |
 | `flight_test` | P1A OK — nave + objetivo a 50m |
-| `on_foot_test` | pendiente P1B-09 |
+| `on_foot_test` | P1B OK — interior LocalToShip → hatch EVA → estación + FPS target |
 | `economy_test` | pendiente P1C-09 |
 | `universe_test` | pendiente P1D-08 |
 | `ui_audio_test` | pendiente P1E-07 |
@@ -35,6 +44,17 @@
 ## Bloqueado (requiere decisión de Miguel)
 - P1D-04 naming final del sistema estelar (placeholders OK: Sistema-01 / Estacion-Alfa / Planeta-01).
 
+## Contrato LocalToShip (P1B-08) — Fase 2 / Fase 5 dependen de esto
+Cuando una entidad lleva `LocalToShip { ship_entity, local_position, local_orientation }`:
+1. La simulación de locomoción/colisión del personaje corre **solo** en el frame local de la nave (`RigidBody6DOF` de `ship_entity`).
+2. `local_position` / `local_orientation` son el estado autoritativo.
+3. `ecs::Position` / `ecs::Orientation` se derivan **solo** para render/audio/cámara:
+   `world_pos = ship.position + ship.orientation * local_position`
+   `world_ori = ship.orientation * local_orientation`
+4. No realimentar `Position` mundial a la locomoción mientras el componente exista.
+5. Al salir (quitar `LocalToShip`), se bakea la pose mundial y la sim pasa a espacio mundo / GravityZone.
+
 ## Bitácora (más reciente arriba, una línea por tarea)
+- 2026-08-10 [P1B-01..09] Character: kinematic capsule + GravityZone/EVA; LocalToShip interior; OnFoot cam 1st/3rd; hatch/pilot Interact; FPS→DamageEvent+Health; scene `--scene=on_foot_test`; `game::fixed_step` = character then flight.
 - 2026-08-10 [P1A-01..10] Flight: RigidBody6DOF mass=45t, main thrust 320kN, coupled brake 280kN; projectile pool 32; target @ z=-50; scene `--scene=flight_test`. Engine: Orientation, KinematicFromRigidBody, FixedStepHook, ControlMode, Actions Roll/ToggleCoupled.
 - 2026-08-10 Fase 0 validada por usuario ("Ok"). Apertura Fase 1 — rama `release/fase-1-vertical-slice`.

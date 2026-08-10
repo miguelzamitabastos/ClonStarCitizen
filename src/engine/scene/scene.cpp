@@ -1,6 +1,7 @@
 #include "engine/scene/scene.hpp"
 
 #include "engine/log/log.hpp"
+#include "game/character/character.hpp"
 #include "game/flight/flight.hpp"
 
 #include <cstdio>
@@ -71,6 +72,73 @@ bool setup_flight_test(SceneContext& ctx)
     return true;
 }
 
+bool setup_on_foot_test(SceneContext& ctx)
+{
+    if (ctx.world == nullptr) {
+        return false;
+    }
+
+    ecs::world_spawn_default_camera(*ctx.world, ctx.aspect);
+    ecs::world_spawn_default_grid(*ctx.world);
+
+    game::flight::spawn_projectile_pool(*ctx.world);
+
+    // Moving ship — coasts while OnFoot so LocalToShip interior is visible.
+    flecs::entity ship =
+        game::flight::spawn_player_ship(*ctx.world, glm::vec3{0.f, 8.f, 0.f});
+    if (game::flight::RigidBody6DOF* rb = ship.try_get_mut<game::flight::RigidBody6DOF>()) {
+        rb->linear_vel = glm::vec3{1.8f, 0.f, 0.f};
+    }
+    if (game::flight::FlightControl* fc = ship.try_get_mut<game::flight::FlightControl>()) {
+        fc->coupled = false;
+    }
+
+    // Player starts inside the ship (authoritative LocalToShip).
+    (void)game::character::spawn_player_character(
+        *ctx.world, glm::vec3{0.f, 0.9f, 0.f}, ship.id());
+
+    (void)game::character::spawn_ship_hatch(
+        *ctx.world, ship.id(), glm::vec3{0.f, 0.9f, 3.2f}, "Exit / Enter hatch");
+    (void)game::character::spawn_pilot_seat(
+        *ctx.world, ship.id(), glm::vec3{0.f, 0.9f, -1.5f}, "Pilot seat");
+
+    // Interior gravity is artificial (LocalToShip path). Station pad has a world zone.
+    constexpr glm::vec3 kStationCenter{45.f, 2.f, 0.f};
+    (void)game::character::spawn_gravity_zone_box(
+        *ctx.world,
+        kStationCenter,
+        glm::vec3{12.f, 6.f, 12.f},
+        glm::vec3{0.f, -1.f, 0.f},
+        game::character::kGravityDefault,
+        "StationGravity");
+
+    // Station deck marker + terminal interactable.
+    {
+        const ecs::Position pos{kStationCenter.x, 0.5f, kStationCenter.z};
+        ctx.world->entity("StationDeck")
+            .set<ecs::Position>(pos)
+            .set<ecs::PreviousPosition>({pos.x, pos.y, pos.z})
+            .set<ecs::Velocity>({0.f, 0.f, 0.f})
+            .set<ecs::Scale>({8.f})
+            .add<ecs::InstanceTag>();
+    }
+    (void)game::character::spawn_station_interactable(
+        *ctx.world,
+        glm::vec3{kStationCenter.x, 1.2f, kStationCenter.z - 3.f},
+        "Station terminal");
+
+    // Dummy FPS combat target on the station pad.
+    (void)game::character::spawn_health_target(
+        *ctx.world, glm::vec3{kStationCenter.x + 4.f, 1.2f, kStationCenter.z}, 1.8f);
+
+    ctx.world->set<ecs::ControlMode>({ecs::ControlModeKind::OnFoot});
+
+    ctx.needs_shared_mesh = true;
+    // ship + player + hatch + seat + station deck + terminal + health target + projectiles
+    ctx.instance_count = 7u + static_cast<u32>(game::flight::kProjectilePoolSize);
+    return true;
+}
+
 constexpr SceneDesc kScenes[] = {
     {"grid_freelook",
      "Free-look camera + ground grid (minimal baseline)",
@@ -84,6 +152,9 @@ constexpr SceneDesc kScenes[] = {
     {"flight_test",
      "Pilotable ship + thrusters/shields/weapons + damage target (P1A)",
      &setup_flight_test},
+    {"on_foot_test",
+     "Ship interior → EVA → station gravity + FPS combat (P1B)",
+     &setup_on_foot_test},
 };
 
 constexpr std::size_t kSceneCount = sizeof(kScenes) / sizeof(kScenes[0]);

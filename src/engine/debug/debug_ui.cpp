@@ -260,6 +260,17 @@ void debug_ui_build(DebugUiState& state, const DebugUiStats& stats)
                 ImGui::Text("Rebase count: %u", stats.rebase_count);
             }
         }
+        if (stats.has_character_telemetry || stats.health >= 0.f) {
+            ImGui::Separator();
+            ImGui::Text("— On Foot —");
+            ImGui::Text(
+                "Health: %.0f / %.0f",
+                static_cast<double>(stats.health),
+                static_cast<double>(stats.health_max));
+            ImGui::Text("Ammo: %u / %u", stats.ammo, stats.ammo_max);
+            ImGui::Text("Grounded: %s", stats.grounded ? "yes" : "no");
+            ImGui::Text("EVA: %s", stats.eva ? "yes" : "no");
+        }
         ImGui::Separator();
         ImGui::Text("F1: %s cursor for UI", state.cursor_for_ui ? "unlock" : "lock");
         ImGui::Text(

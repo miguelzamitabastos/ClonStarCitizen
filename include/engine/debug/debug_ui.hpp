@@ -39,6 +39,15 @@ struct DebugUiStats {
     f32  hull_max_hp        = 0.f;
     bool coupled            = false;
     u32  rebase_count       = 0; // reserved for Fase 1D floating origin
+
+    /// On-foot telemetry (P1B) — shown when has_character_telemetry is true.
+    bool has_character_telemetry = false;
+    f32  health                  = -1.f;
+    f32  health_max              = 0.f;
+    u32  ammo                    = 0;
+    u32  ammo_max                = 0;
+    bool grounded                = false;
+    bool eva                     = false;
 };
 
 /// ImGui overlay state — plain POD + Vulkan resources owned here.
