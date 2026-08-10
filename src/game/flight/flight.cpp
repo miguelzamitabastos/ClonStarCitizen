@@ -530,6 +530,48 @@ void apply_damage_events(flecs::world& world)
     }
 }
 
+/// P2-01: engineers repair the most damaged subsystem bank of their ship.
+/// Turret gunners are pure decision consumers — their actuation is in P2-03.
+void step_crew(flecs::world& world, f32 dt)
+{
+    world.each([&](flecs::entity e, const CrewMember& crew) {
+        if (crew.role != CrewRole::Engineer || crew.ship == 0) {
+            return;
+        }
+        if (e.has<character::CharacterDead>()) {
+            return;
+        }
+        flecs::entity ship = world.entity(crew.ship);
+        if (!ship.is_alive() || ship.has<Destroyed>()) {
+            return;
+        }
+        ShipSubsystems* subs = ship.try_get_mut<ShipSubsystems>();
+        if (subs == nullptr) {
+            return;
+        }
+
+        // Most damaged bank first (lowest health fraction, below 100%).
+        u32 worst      = combat::kSubsystemCount;
+        f32 worst_frac = 1.f;
+        for (u32 i = 0; i < combat::kSubsystemCount; ++i) {
+            const SubsystemHealth& h = subs->items[i];
+            if (h.max_hp <= 1e-3f) {
+                continue;
+            }
+            const f32 frac = h.hp / h.max_hp;
+            if (frac < worst_frac) {
+                worst_frac = frac;
+                worst      = i;
+            }
+        }
+        if (worst >= combat::kSubsystemCount) {
+            return;
+        }
+        SubsystemHealth& bank = subs->items[worst];
+        bank.hp = std::min(bank.max_hp, bank.hp + crew.repair_rate * dt);
+    });
+}
+
 void cleanup_destroyed(flecs::world& world)
 {
     flecs::entity_t strip[kMaxHullTargets]{};
@@ -833,6 +875,7 @@ void fixed_step(flecs::world& world, f32 dt)
 
     step_projectiles(world, dt, targets, target_count);
     apply_damage_events(world);
+    step_crew(world, dt); // P2-01: engineer repairs after this tick's damage
     cleanup_destroyed(world);
 }
 
@@ -972,6 +1015,52 @@ flecs::entity spawn_damage_target(flecs::world& world, const glm::vec3& position
         static_cast<double>(hull.hp));
 
     return target;
+}
+
+flecs::entity spawn_crew_member(
+    flecs::world&    world,
+    flecs::entity_t  ship,
+    CrewRole         role,
+    const glm::vec3& local_seat,
+    const char*      name)
+{
+    CrewMember crew{};
+    crew.role = role;
+    crew.ship = ship;
+
+    character::LocalToShip seat{};
+    seat.ship_entity    = ship;
+    seat.local_position = local_seat;
+
+    character::Health hp{};
+    hp.max_hp = 100.f;
+    hp.hp     = 100.f;
+
+    // World pose is derived by sync_local_to_ship_world (LocalToShip contract).
+    const ecs::Position pos{0.f, 0.f, 0.f};
+
+    flecs::entity crew_e = world.entity(name)
+                               .set<CrewMember>(crew)
+                               .set<character::LocalToShip>(seat)
+                               .set<character::Health>(hp)
+                               .set<ecs::Position>(pos)
+                               .set<ecs::PreviousPosition>({pos.x, pos.y, pos.z})
+                               .set<ecs::Velocity>({0.f, 0.f, 0.f})
+                               .set<ecs::Orientation>({})
+                               .set<ecs::Scale>({0.7f})
+                               .add<ecs::InstanceTag>()
+                               .add<ecs::KinematicFromRigidBody>();
+
+    log::log_info(
+        log::LogCategory::Game,
+        "Spawned crew '%s' role=%s seat=(%.1f, %.1f, %.1f)",
+        name,
+        (role == CrewRole::Engineer) ? "engineer" : "turret-gunner",
+        static_cast<double>(local_seat.x),
+        static_cast<double>(local_seat.y),
+        static_cast<double>(local_seat.z));
+
+    return crew_e;
 }
 
 void spawn_projectile_pool(flecs::world& world)

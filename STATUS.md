@@ -5,8 +5,8 @@
 Fase 1 validada físicamente por el usuario (2026-08-10) — apertura de Fase 2.
 
 ## Progreso Fase 2
-- Naves y vuelo (P2-01..04):   [.] 0/4
-  - [ ] P2-01 Tripulación NPC (artillero / ingeniero) con asiento fijo LocalToShip
+- Naves y vuelo (P2-01..04):   [##] 2/4
+  - [x] P2-01 Tripulación NPC (artillero / ingeniero) con asiento fijo LocalToShip
   - [x] P2-02 Daño por componente (ENG/SHD/WPN/SEN) vía DamageEvent.subsystem
   - [ ] P2-03 Torretas giratorias (IA o jugador) con arco de disparo
   - [ ] P2-04 Modelo de vuelo atmosférico vs vacío (arrastre + sustentación)
@@ -189,6 +189,10 @@ Cuando una entidad lleva `LocalToShip { ship_entity, local_position, local_orien
 5. Al salir (quitar `LocalToShip`), se bakea la pose mundial y la sim pasa a espacio mundo / GravityZone.
 
 ## Bitácora (más reciente arriba, una línea por tarea)
+- 2026-08-10 [P2-01] Tripulación NPC: CrewMember (gunner/engineer) sentado vía LocalToShip
+  (mismo patrón que jugador a pie, sin física propia). Ingeniero repara el banco más dañado
+  a 6 HP/s tras el daño del tick. Gunner enlaza turret (actuación en P2-03). Crew no
+  persiste en save v1 (misma decisión que subsistemas). Siguiente: P2-03 torretas.
 - 2026-08-10 [P2-11] Framework IA compartido (src/game/ai/): FSM + select_target + reputación,
   SensorLink para torretas, telemetría por estado. Siguiente: P2-01/P2-03 consumen AiAgent.
 - 2026-08-10 [P2-02] Daño por componente: ShipSubsystems (4 bancos POD), DamageEvent.subsystem,

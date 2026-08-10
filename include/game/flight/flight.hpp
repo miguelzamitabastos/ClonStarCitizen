@@ -82,6 +82,25 @@ struct SubsystemTelemetry {
     f32 efficiency[combat::kSubsystemCount]{};
 };
 
+// --- P2-01: NPC crew ------------------------------------------------------------
+
+/// Subsystem HP/s an engineer restores while seated and alive.
+inline constexpr f32 kEngineerRepairRate = 6.f;
+
+enum class CrewRole : u8 {
+    TurretGunner = 0, ///< drives an assigned TurretMount (P2-03) via ai::AiAgent
+    Engineer     = 1, ///< repairs the most damaged ShipSubsystems bank (P2-02)
+};
+
+/// NPC crew seat. The entity ALSO carries character::LocalToShip (P1B-08):
+/// crew live in ship-local space exactly like the player on foot inside a ship.
+struct CrewMember {
+    CrewRole        role        = CrewRole::Engineer;
+    flecs::entity_t ship        = 0;
+    flecs::entity_t turret      = 0; ///< gunner: assigned turret entity (P2-03)
+    f32             repair_rate = kEngineerRepairRate;
+};
+
 struct Thruster {
     glm::vec3 relative_pos{0.f}; // body space, from CoM
     glm::vec3 direction{0.f, 0.f, -1.f}; // body space unit
@@ -178,6 +197,14 @@ void map_flight_control_to_thrusters(
 
 [[nodiscard]] flecs::entity spawn_damage_target(
     flecs::world& world, const glm::vec3& position, f32 scale = 4.f);
+
+/// P2-01: spawn an NPC crew member seated at `local_seat` (ship-local frame).
+[[nodiscard]] flecs::entity spawn_crew_member(
+    flecs::world&    world,
+    flecs::entity_t  ship,
+    CrewRole         role,
+    const glm::vec3& local_seat,
+    const char*      name);
 
 /// Pre-spawn inactive projectile entities into ProjectilePool singleton (level load).
 void spawn_projectile_pool(flecs::world& world);
