@@ -43,7 +43,14 @@
   - [x] P1D-05 Estación como interior navegable (StationRoot + LocalToShip / GravityZone)
   - [x] P1D-06 Transición espacio → zona aterrizaje prefab (Planeta-01-LZ)
   - [x] P1D-08 Escena `universe_test` + overlay rebase_count
-- P1E UI/HUD/Audio:       [.......] 0/7  tareas
+- P1E UI/HUD/Audio:       [#######] 7/7  tareas — COMPLETADA
+  - [x] P1E-01 UI framework = **Dear ImGui** (opción a); look-and-feel se rehace en Fase 6
+  - [x] P1E-02 HUD vuelo: speed / energy / shield% / hull (`flight::fill_player_telemetry`)
+  - [x] P1E-03 HUD a pie: health / ammo / interact prompt (`InteractionFocus`)
+  - [x] P1E-04 Menús: pausa (Esc→`SimulationPaused`), system map, cargo, mission log
+  - [x] P1E-05 Audio 3D **miniaudio** 0.11.21; voice pool `kMaxConcurrentVoices=16`; buses SFX/Music/UI
+  - [x] P1E-06 Cues: fire / thruster loop / impact (integrity drop) / UI click
+  - [x] P1E-07 Escena `ui_audio_test` (HUDs Both + pause + ≥3 tonos posicionales)
 - P1F Persistencia:       [......] 0/6  tareas
 
 ## Escenas demo
@@ -54,8 +61,18 @@
 | `on_foot_test` | P1B OK — interior LocalToShip → hatch EVA → estación + FPS target |
 | `economy_test` | P1C OK — MarketA cheap ore → TravelPad → MarketB sell/turn-in |
 | `universe_test` | P1D OK — Estacion-Alfa → espacio (rebase ≥1) → Planeta-01-LZ |
-| `ui_audio_test` | pendiente P1E-07 |
+| `ui_audio_test` | P1E OK — HUD Both, Esc pause, 3 positional sine tones (synthetic PCM) |
 | `save_load_test` | pendiente P1F-06 |
+
+## Decisiones P1E (documentadas)
+1. **UI framework (P1E-01):** opción **(a) Dear ImGui** también para UI de juego esta fase.
+   Ya estaba en P0-11 como overlay de depuración. Se acepta rehacer estilo/layout/gamepad
+   en **Fase 6 (pulido)**. Widgets HUD/menú usan `char[]` + `snprintf` (cero heap/frame).
+2. **Audio (P1E-05):** **miniaudio** 0.11.21 vía FetchContent (`mackron/miniaudio`).
+   Clips sintéticos en buffers fijos (sin WAV externos). Voice pool fijo 16; si se agota
+   se descarta la petición de menor prioridad. Buses SFX / Music / UI independientes.
+   Listener = cámara (`Camera3D.eye`); atenuación por distancia en coords **relativas**
+   (mismo frame que entidades post-rebase floating origin).
 
 ## Bloqueado (requiere decisión de Miguel)
 - P1D-04 naming final del sistema estelar (placeholders OK: Sistema-01 / Estacion-Alfa / Planeta-01).
@@ -89,6 +106,7 @@ Cuando una entidad lleva `LocalToShip { ship_entity, local_position, local_orien
 5. Al salir (quitar `LocalToShip`), se bakea la pose mundial y la sim pasa a espacio mundo / GravityZone.
 
 ## Bitácora (más reciente arriba, una línea por tarea)
+- 2026-08-10 [P1E-01..07] UI=ImGui (Fase 6 rework); HUD flight/on-foot; pause+menus; miniaudio voice pool 16 + SFX/Music/UI buses; `--scene=ui_audio_test`.
 - 2026-08-10 [P1C-01..07,09] Economy: cfg Commodity/Market/MissionTemplate; CargoHold+Wallet; buy/sell supply curve; MissionActive Pool; FactionReputation; NPC Interact; `--scene=economy_test`. Load-time parsers only (no heap in loop).
 - 2026-08-10 [P1D-01..08] Floating origin (threshold 2000 m); StarSystemData+cfg placeholders; LevelStreamTrigger soft load; station LocalToShip+GravityZone; landing LZ; `--scene=universe_test`; debug rebase_count.
 - 2026-08-10 [P1B-01..09] Character: kinematic capsule + GravityZone/EVA; LocalToShip interior; OnFoot cam 1st/3rd; hatch/pilot Interact; FPS→DamageEvent+Health; scene `--scene=on_foot_test`; `game::fixed_step` = character then flight.

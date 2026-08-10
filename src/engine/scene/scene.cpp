@@ -1,9 +1,11 @@
 #include "engine/scene/scene.hpp"
 
 #include "engine/log/log.hpp"
+#include "game/audio/audio.hpp"
 #include "game/character/character.hpp"
 #include "game/economy/economy.hpp"
 #include "game/flight/flight.hpp"
+#include "game/ui/ui.hpp"
 #include "game/world/world.hpp"
 
 #include <cstdio>
@@ -175,6 +177,94 @@ bool setup_universe_test(SceneContext& ctx)
     return true;
 }
 
+bool setup_ui_audio_test(SceneContext& ctx)
+{
+    if (ctx.world == nullptr) {
+        return false;
+    }
+
+    ecs::world_spawn_default_camera(*ctx.world, ctx.aspect);
+    ecs::world_spawn_default_grid(*ctx.world);
+
+    game::ui::ensure_singletons(*ctx.world);
+    {
+        game::ui::UiMenuState menus{};
+        menus.hud_mode = game::ui::HudDisplayMode::Both;
+        ctx.world->set<game::ui::UiMenuState>(menus);
+        ctx.world->set<game::ui::SimulationPaused>({false});
+    }
+
+    // Star system for pause → System Map.
+    game::world::StarSystemData system{};
+    (void)game::world::load_star_system_config(system, "assets/data/star_system.cfg");
+    ctx.world->set<game::world::StarSystemData>(system);
+    ctx.world->set<game::world::FloatingOrigin>(game::world::FloatingOrigin{});
+
+    (void)game::economy::load_economy_data(*ctx.world);
+
+    game::flight::spawn_projectile_pool(*ctx.world);
+    flecs::entity ship =
+        game::flight::spawn_player_ship(*ctx.world, glm::vec3{0.f, 5.f, 0.f});
+    game::economy::attach_cargo_hold_if_missing(ship);
+    (void)game::flight::spawn_damage_target(*ctx.world, glm::vec3{0.f, 5.f, -40.f}, 4.f);
+
+    // Seed cargo + an active mission for inventory / mission-log menus.
+    if (game::economy::CargoHold* hold = ship.try_get_mut<game::economy::CargoHold>()) {
+        const game::economy::CommodityTable* table =
+            ctx.world->try_get<game::economy::CommodityTable>();
+        if (table != nullptr) {
+            (void)game::economy::cargo_add(*hold, *table, 1u, 3u);
+        }
+    }
+    if (game::economy::MissionActivePool* pool =
+            ctx.world->try_get_mut<game::economy::MissionActivePool>()) {
+        const game::economy::MissionTemplateTable* templates =
+            ctx.world->try_get<game::economy::MissionTemplateTable>();
+        if (templates != nullptr) {
+            (void)game::economy::mission_try_accept(*pool, *templates, 1u);
+        }
+    }
+
+    (void)game::character::spawn_player_character(
+        *ctx.world, glm::vec3{2.f, 1.f, 4.f}, 0);
+
+    // Three simultaneous looping positional tones at different ranges (P1E-07).
+    auto spawn_emitter = [&](const char* name, const glm::vec3& p, game::audio::SoundId snd,
+                             u32 key, f32 scale) {
+        game::audio::PositionalEmitter em{};
+        em.sound       = snd;
+        em.priority    = game::audio::kPriorityNormal;
+        em.gain        = 0.7f;
+        em.looping     = true;
+        em.emitter_key = key;
+        const ecs::Position pos{p.x, p.y, p.z};
+        ctx.world->entity(name)
+            .set<ecs::Position>(pos)
+            .set<ecs::PreviousPosition>({pos.x, pos.y, pos.z})
+            .set<ecs::Velocity>({0.f, 0.f, 0.f})
+            .set<ecs::Scale>({scale})
+            .set<game::audio::PositionalEmitter>(em)
+            .add<ecs::InstanceTag>();
+    };
+    spawn_emitter(
+        "AudioToneNear", glm::vec3{6.f, 2.f, -4.f}, game::audio::SoundId::ToneNear, 100u, 0.8f);
+    spawn_emitter(
+        "AudioToneMid", glm::vec3{-18.f, 3.f, -12.f}, game::audio::SoundId::ToneMid, 101u, 1.2f);
+    spawn_emitter(
+        "AudioToneFar", glm::vec3{35.f, 4.f, -50.f}, game::audio::SoundId::ToneFar, 102u, 1.6f);
+
+    ctx.world->set<ecs::ControlMode>({ecs::ControlModeKind::ShipPilot});
+
+    ctx.needs_shared_mesh = true;
+    // ship + target + character + 3 emitters + projectiles
+    ctx.instance_count = 6u + static_cast<u32>(game::flight::kProjectilePoolSize);
+
+    log::log_info(
+        log::LogCategory::Game,
+        "ui_audio_test: HUD Both | Esc=pause | 3 positional tones | fire/thrust SFX");
+    return true;
+}
+
 constexpr SceneDesc kScenes[] = {
     {"grid_freelook",
      "Free-look camera + ground grid (minimal baseline)",
@@ -197,6 +287,9 @@ constexpr SceneDesc kScenes[] = {
     {"universe_test",
      "Fixed star system: station ↔ open space (rebase) ↔ planetary LZ (P1D)",
      &setup_universe_test},
+    {"ui_audio_test",
+     "Flight+on-foot HUD, pause menus, ≥3 positional tones (P1E)",
+     &setup_ui_audio_test},
 };
 
 constexpr std::size_t kSceneCount = sizeof(kScenes) / sizeof(kScenes[0]);

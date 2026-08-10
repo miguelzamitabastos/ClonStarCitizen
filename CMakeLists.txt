@@ -49,7 +49,7 @@ if(NOT tinygltf_POPULATED)
     FetchContent_Populate(tinygltf)
 endif()
 
-# Dear ImGui (debug overlay) — pin v1.91.0; compiled into a small static lib
+# Dear ImGui (debug overlay + game HUD P1E) — pin v1.91.0; compiled into a small static lib
 FetchContent_Declare(
     imgui
     GIT_REPOSITORY https://github.com/ocornut/imgui.git
@@ -59,6 +59,18 @@ FetchContent_Declare(
 FetchContent_GetProperties(imgui)
 if(NOT imgui_POPULATED)
     FetchContent_Populate(imgui)
+endif()
+
+# miniaudio (header-only) — P1E spatial / UI / music buses; pin tagged release
+FetchContent_Declare(
+    miniaudio
+    GIT_REPOSITORY https://github.com/mackron/miniaudio.git
+    GIT_TAG        0.11.21
+    GIT_SHALLOW    TRUE
+)
+FetchContent_GetProperties(miniaudio)
+if(NOT miniaudio_POPULATED)
+    FetchContent_Populate(miniaudio)
 endif()
 
 add_library(imgui_vulkan STATIC
@@ -158,6 +170,7 @@ target_include_directories(clon_star_citizen
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
         ${tinygltf_SOURCE_DIR}
+        ${miniaudio_SOURCE_DIR}
 )
 
 target_link_libraries(clon_star_citizen
@@ -191,6 +204,7 @@ message(STATUS "  Vulkan: ${Vulkan_VERSION}")
 message(STATUS "  Flecs:  v4.1.6 (FetchContent)")
 message(STATUS "  GLM:    1.0.1 (FetchContent, FORCE_RADIANS + DEPTH_ZERO_TO_ONE)")
 message(STATUS "  tinygltf: v2.9.3 (FetchContent, header-only)")
-message(STATUS "  ImGui:  v1.91.0 (FetchContent, debug overlay)")
+message(STATUS "  ImGui:  v1.91.0 (FetchContent, debug overlay + game HUD)")
+message(STATUS "  miniaudio: 0.11.21 (FetchContent, header-only audio)")
 message(STATUS "  CSC_ENABLE_DEBUG_UI=${CSC_ENABLE_DEBUG_UI}")
 message(STATUS "  Shaders:${SHADER_BINARY_DIR}")

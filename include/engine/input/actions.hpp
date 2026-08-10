@@ -18,6 +18,7 @@ enum class Action : u16 {
     ToggleCoupled,
     RollLeft,
     RollRight,
+    Pause, // Esc — toggle SimulationPaused / pause menu (P1E)
     Count
 };
 

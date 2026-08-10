@@ -70,6 +70,9 @@ void input_set_default_bindings(InputSystem& sys)
     add_binding(sys, BindingDevice::Keyboard, GLFW_KEY_Z, Action::RollLeft);
     add_binding(sys, BindingDevice::Keyboard, GLFW_KEY_X, Action::RollRight);
     add_binding(sys, BindingDevice::Keyboard, GLFW_KEY_LEFT_ALT, Action::ToggleCoupled);
+
+    // P1E: Esc toggles pause menu / SimulationPaused.
+    add_binding(sys, BindingDevice::Keyboard, GLFW_KEY_ESCAPE, Action::Pause);
 }
 
 void input_set_config(InputSystem& sys, const InputConfig& config)

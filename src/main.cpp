@@ -244,6 +244,13 @@ int main(int argc, char** argv)
     (void)debug::debug_ui_init(debug_ui, window.handle, vk_instance, vk_device, vk_renderer);
 #endif
 
+    game::audio::AudioEngine& audio_engine = game::audio::audio_engine_storage();
+    if (!game::audio::audio_init(audio_engine)) {
+        log::log_warn(log::LogCategory::Game, "Audio init failed — continuing silent.");
+    }
+    game::audio::audio_bind_world(world, audio_engine);
+    game::ui::ensure_singletons(world);
+
     log::log_info(
         log::LogCategory::Core,
         "ClonStarCitizen online — scene=%s instances=%u flecs_pos=%zu asset_arena=%zu/%zu "
@@ -284,9 +291,31 @@ int main(int argc, char** argv)
 
         input::input_poll(input_sys, action_scratch);
 
-        if (debug::debug_ui_want_capture_mouse(debug_ui) || debug_ui.cursor_for_ui) {
+        bool ui_cursor = false;
+        game::ui::frame_update(world, action_scratch, window.handle, ui_cursor);
+
+        if (debug::debug_ui_want_capture_mouse(debug_ui) || debug_ui.cursor_for_ui
+            || ui_cursor) {
             action_scratch.axes[static_cast<u16>(input::ActionAxis::LookX)] = 0.f;
             action_scratch.axes[static_cast<u16>(input::ActionAxis::LookY)] = 0.f;
+        }
+        // While paused, swallow gameplay buttons so fire/thrust don't latch.
+        if (game::ui::is_simulation_paused(world)) {
+            for (u16 i = 0; i < input::kActionCount; ++i) {
+                if (i == static_cast<u16>(input::Action::Pause)) {
+                    continue;
+                }
+                action_scratch.pressed[i]       = false;
+                action_scratch.just_pressed[i]  = false;
+                action_scratch.just_released[i] = false;
+            }
+            for (u16 i = 0; i < input::kActionAxisCount; ++i) {
+                if (i == static_cast<u16>(input::ActionAxis::LookX)
+                    || i == static_cast<u16>(input::ActionAxis::LookY)) {
+                    continue;
+                }
+                action_scratch.axes[i] = 0.f;
+            }
         }
         world.set<ecs::InputActions>({action_scratch});
 
@@ -304,7 +333,15 @@ int main(int argc, char** argv)
                 : (fps_ema + kFpsEmaAlpha * (instant_fps - fps_ema));
         }
 
-        ecs::world_tick(world, frame_time, dt);
+        // P1E: pause freezes fixed sim but keeps rendering (and ImGui).
+        if (game::ui::is_simulation_paused(world)) {
+            world.set<ecs::FrameInterpolation>({frame_time.alpha});
+            ecs::world_progress(world, 0.f);
+        } else {
+            ecs::world_tick(world, frame_time, dt);
+        }
+
+        game::audio::frame_update(world, audio_engine);
 
         if (!ecs::world_try_get_primary_camera(world, camera_scratch)) {
             log::log_error(log::LogCategory::Ecs, "Primary Camera3D missing; exiting.");
@@ -375,6 +412,7 @@ int main(int argc, char** argv)
         if (ui_ptr != nullptr) {
             debug::debug_ui_begin_frame(debug_ui);
             debug::debug_ui_build(debug_ui, ui_stats);
+            game::ui::frame_draw(world);
         }
 
         if (!vulkan::renderer_draw_frame(
@@ -395,6 +433,7 @@ int main(int argc, char** argv)
     if (mesh_loader_started) {
         assets::mesh_loader_shutdown(mesh_loader);
     }
+    game::audio::audio_shutdown(audio_engine);
     debug::debug_ui_shutdown(debug_ui, vk_device);
     vulkan::renderer_destroy(vk_renderer, vk_device);
     vulkan::device_destroy(vk_device, vk_instance);
