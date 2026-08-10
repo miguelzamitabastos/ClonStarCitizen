@@ -1,53 +1,29 @@
 # STATUS
 
-## Fase activa: Fase 0 — Cimientos del Motor — **COMPLETADA**
+## Fase activa: Fase 1 — Vertical Slice — **EN PROGRESO**
 
 ## Progreso por documento
-- P0 Cimientos del Motor: [#############] 13/13 tareas
-  - [x] P0-01 Depth buffer + depth testing
-  - [x] P0-02 Resize de swapchain / minimizado
-  - [x] P0-03 Sistema de input abstraído
-  - [x] P0-04 Scheduler ECS fixed-timestep
-  - [x] P0-05 Sistema de configuración
-  - [x] P0-06 Logging estructurado
-  - [x] P0-07 Pipeline carga mallas glTF async
-  - [x] P0-08 Texturas + descriptor sets/UBO
-  - [x] P0-09 Draw indexed instanced
-  - [x] P0-10 Abstracción material/pipeline
-  - [x] P0-11 Overlay depuración ImGui
-  - [x] P0-12 Harness escenas demo
-  - [x] P0-13 Esqueleto src/game/*
+- P0 Cimientos del Motor: [#############] 13/13 tareas — COMPLETADA
+- P1A Vuelo y Naves:      [..........] 0/10 tareas
+- P1B A pie y FPS:        [.........] 0/9  tareas
+- P1C Economía/Misiones:  [.......] 0/8  tareas
+- P1D Universo fijo:      [........] 0/8  tareas
+- P1E UI/HUD/Audio:       [.......] 0/7  tareas
+- P1F Persistencia:       [......] 0/6  tareas
 
-## Escenas demo (P0-12)
-| Escena | Lanzamiento | Qué verifica |
-|---|---|---|
-| `grid_freelook` (default) | `./clon_star_citizen` o `--scene=grid_freelook` | Cámara free-look + grid |
-| `instancing_stress` | `./clon_star_citizen --scene=instancing_stress` | 600 cubos / 1 draw (P0-09) |
-| `mesh_viewer` | `./clon_star_citizen --scene=mesh_viewer` | glTF cube upload (P0-07) |
-
-Config: `assets/config/default.cfg` (`scene_name=...`). Nombre desconocido → fallback a `grid_freelook`.
-
-## Cierre de Fase 0
-- **Probado en cloud:** lavapipe + Xvfb; capturas en `artifacts/screenshots/`.
-- **No probado aquí:** resize real con ratón, mando, GPU discreta, validación layers.
-- **Fuera de alcance (consciente):** materiales PBR reales, async GPU transfer queue dedicada, ImGui dock completo.
-- **Nota terceros:** Dear ImGui puede allocar internamente (FetchContent permitido por roadmap).
-- **PARADA:** no iniciar Fase 1 hasta validación física del usuario (`git pull` + run en PC).
+## Escenas demo
+| Escena | Estado |
+|---|---|
+| `grid_freelook` / `instancing_stress` / `mesh_viewer` | Fase 0 OK |
+| `flight_test` | pendiente P1A-10 |
+| `on_foot_test` | pendiente P1B-09 |
+| `economy_test` | pendiente P1C-09 |
+| `universe_test` | pendiente P1D-08 |
+| `ui_audio_test` | pendiente P1E-07 |
+| `save_load_test` | pendiente P1F-06 |
 
 ## Bloqueado (requiere decisión de Miguel)
-- Validación física de Fase 0 en PC del usuario antes de abrir Fase 1.
+- P1D-04 naming final del sistema estelar (placeholders OK: Sistema-01 / Estacion-Alfa / Planeta-01).
 
 ## Bitácora (más reciente arriba, una línea por tarea)
-- 2026-08-09 [P0-12] Harness escenas: grid_freelook / instancing_stress / mesh_viewer. Capturas p0-12-*.png. **Fase 0 completa — a la espera de validación física.**
-- 2026-08-09 [P0-11] ImGui overlay FPS/entidades/inspector. F1 cursor. Captura: p0-11-imgui-overlay.png.
-- 2026-08-09 [P0-09] Instancing 600 cubos / 1 draw. Captura: p0-09-instancing.png.
-- 2026-08-09 [P0-10] PipelineCatalog/MaterialCatalog (cap 16).
-- 2026-08-09 [P0-08] UBO + sampler + textura blanca 1x1; mesh shaders.
-- 2026-08-09 [P0-07] tinygltf + MeshLoader async + cube.gltf.
-- 2026-08-09 [P0-04] Fixed-dt + PreviousPosition + FrameInterpolation.alpha.
-- 2026-08-09 [P0-13] Esqueleto src/game/* + docs/game-modules.md.
-- 2026-08-09 [P0-06] Logging por categorías.
-- 2026-08-09 [P0-05] AppConfig + default.cfg + --scene=.
-- 2026-08-09 [P0-03] Input acciones lógicas.
-- 2026-08-09 [P0-02] Resize swapchain+depth; skip 0x0.
-- 2026-08-09 [P0-01] Depth buffer. Captura: p0-01-depth-grid.png.
+- 2026-08-10 Fase 0 validada por usuario ("Ok"). Apertura Fase 1 — rama `release/fase-1-vertical-slice`.
