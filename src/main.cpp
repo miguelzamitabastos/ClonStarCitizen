@@ -12,6 +12,7 @@
 #include "engine/vulkan/instance.hpp"
 #include "engine/vulkan/renderer.hpp"
 
+#include "game/ai/ai.hpp"
 #include "game/audio/audio.hpp"
 #include "game/character/character.hpp"
 #include "game/economy/economy.hpp"
@@ -41,6 +42,7 @@ void register_game_systems(flecs::world& world)
 {
     csc::game::flight::register_systems(world);
     csc::game::character::register_systems(world);
+    csc::game::ai::register_systems(world);
     csc::game::economy::register_systems(world);
     csc::game::world::register_systems(world);
     csc::game::ui::register_systems(world);

@@ -18,8 +18,8 @@ Fase 1 validada físicamente por el usuario (2026-08-10) — apertura de Fase 2.
   - [ ] P2-08 Simulación económica dinámica (producción/consumo, eventos de precio)
   - [ ] P2-09 Misiones encadenadas con ramificación simple
   - [ ] P2-10 Misiones combate/escolta reutilizando IA P2-03/P2-06
-- IA y facciones (P2-11..12):  [.] 0/2
-  - [ ] P2-11 Framework de IA compartido (FSM patrulla/alerta/combate/huida + hostilidad por reputación)
+- IA y facciones (P2-11..12):  [#] 1/2
+  - [x] P2-11 Framework de IA compartido (FSM patrulla/alerta/combate/huida + hostilidad por reputación)
   - [ ] P2-12 Encuentros aleatorios por proximidad desde Pool
 - Mundo (P2-13):               [.] 0/1
   - [ ] P2-13 Más localizaciones en el sistema fijo (esquema P1D-02)
@@ -35,6 +35,16 @@ Fase 1 validada físicamente por el usuario (2026-08-10) — apertura de Fase 2.
    para detección IA (P2-11) y HUD. HUD vuelo muestra ENG/SGN/WPN/SEN u OFFLINE.
    El formato de guardado v1 NO serializa subsistemas todavía (decisión: bump de
    schema al cerrar más componentes de Fase 2, una sola migración).
+2. **P2-11 IA compartida:** `src/game/ai/` es la ÚNICA máquina de decisión
+   (`AiAgent` FSM Patrol/Alert/Combat/Flee + `select_target` + hostilidad).
+   Decisión y actuación separadas: torretas/NPCs/naves solo LEEN `AiAgent.state`
+   y `AiAgent.target` en sus sistemas. Facciones: 0=Comercio, 1=Seguridad,
+   2=Colonos, 3=Piratas (`kPirateFaction`, hostil a todos siempre). Hostilidad
+   hacia el jugador = `rep[f] < -10` (`kHostileRepThreshold`) — una sola función
+   `faction_hostile_to_player` para los tres contextos (DoD). Percepción por
+   distancia (sin line-of-sight esta fase) escalada por sensores P2-02 propios o
+   del host (`SensorLink`, floor 30%). `ai::fixed_step` corre ANTES de
+   character/flight en `game::fixed_step`. Buffer fijo 32 candidatos, cero heap.
 
 ## Fase 1 — Vertical Slice — **COMPLETADA y validada** (histórico)
 
@@ -179,6 +189,8 @@ Cuando una entidad lleva `LocalToShip { ship_entity, local_position, local_orien
 5. Al salir (quitar `LocalToShip`), se bakea la pose mundial y la sim pasa a espacio mundo / GravityZone.
 
 ## Bitácora (más reciente arriba, una línea por tarea)
+- 2026-08-10 [P2-11] Framework IA compartido (src/game/ai/): FSM + select_target + reputación,
+  SensorLink para torretas, telemetría por estado. Siguiente: P2-01/P2-03 consumen AiAgent.
 - 2026-08-10 [P2-02] Daño por componente: ShipSubsystems (4 bancos POD), DamageEvent.subsystem,
   roll de localización LCG, degradación ENG/SHD/WPN en fixed_step, HUD por subsistema.
   Siguiente (P2-11) necesita SEN para radio de detección IA.
