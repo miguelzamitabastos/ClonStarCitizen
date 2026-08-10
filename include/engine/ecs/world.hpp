@@ -12,6 +12,12 @@
 namespace csc::ecs {
 
 /// Plain POD components — Flecs stores them contiguously in archetypes.
+///
+/// Floating-origin contract (P1D-01 / P1D-07) — see also game/world/world.hpp:
+/// Position stores f32 coordinates relative to FloatingOrigin (never absolute f64).
+/// Absolute world ≈ relative + FloatingOrigin.origin_offset. On rebase, all
+/// Position / PreviousPosition values are shifted in-place; do not introduce a
+/// parallel f64 world-position path. LocalToShip.local_position stays ship-local.
 struct Position {
     f32 x = 0.f;
     f32 y = 0.f;

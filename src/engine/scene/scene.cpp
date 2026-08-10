@@ -3,6 +3,7 @@
 #include "engine/log/log.hpp"
 #include "game/character/character.hpp"
 #include "game/flight/flight.hpp"
+#include "game/world/world.hpp"
 
 #include <cstdio>
 #include <cstring>
@@ -139,6 +140,26 @@ bool setup_on_foot_test(SceneContext& ctx)
     return true;
 }
 
+bool setup_universe_test(SceneContext& ctx)
+{
+    if (ctx.world == nullptr) {
+        return false;
+    }
+
+    ecs::world_spawn_default_camera(*ctx.world, ctx.aspect);
+    ecs::world_spawn_default_grid(*ctx.world);
+
+    game::world::StarSystemData system{};
+    (void)game::world::load_star_system_config(system, "assets/data/star_system.cfg");
+
+    (void)game::world::spawn_universe_test(*ctx.world, system);
+
+    ctx.needs_shared_mesh = true;
+    // Station + star + planet + ship + streamed props (when loaded) + projectiles.
+    ctx.instance_count = 16u + static_cast<u32>(game::flight::kProjectilePoolSize);
+    return true;
+}
+
 constexpr SceneDesc kScenes[] = {
     {"grid_freelook",
      "Free-look camera + ground grid (minimal baseline)",
@@ -155,6 +176,9 @@ constexpr SceneDesc kScenes[] = {
     {"on_foot_test",
      "Ship interior → EVA → station gravity + FPS combat (P1B)",
      &setup_on_foot_test},
+    {"universe_test",
+     "Fixed star system: station ↔ open space (rebase) ↔ planetary LZ (P1D)",
+     &setup_universe_test},
 };
 
 constexpr std::size_t kSceneCount = sizeof(kScenes) / sizeof(kScenes[0]);

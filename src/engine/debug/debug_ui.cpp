@@ -256,9 +256,6 @@ void debug_ui_build(DebugUiState& state, const DebugUiStats& stats)
                 static_cast<double>(stats.hull_hp),
                 static_cast<double>(stats.hull_max_hp));
             ImGui::Text("Coupled: %s", stats.coupled ? "ON" : "OFF");
-            if (stats.rebase_count > 0) {
-                ImGui::Text("Rebase count: %u", stats.rebase_count);
-            }
         }
         if (stats.has_character_telemetry || stats.health >= 0.f) {
             ImGui::Separator();
@@ -271,6 +268,9 @@ void debug_ui_build(DebugUiState& state, const DebugUiStats& stats)
             ImGui::Text("Grounded: %s", stats.grounded ? "yes" : "no");
             ImGui::Text("EVA: %s", stats.eva ? "yes" : "no");
         }
+        ImGui::Separator();
+        ImGui::Text("— World (P1D) —");
+        ImGui::Text("Floating-origin rebases: %u", stats.rebase_count);
         ImGui::Separator();
         ImGui::Text("F1: %s cursor for UI", state.cursor_for_ui ? "unlock" : "lock");
         ImGui::Text(

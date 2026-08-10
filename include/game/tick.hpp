@@ -6,7 +6,7 @@
 
 namespace csc::game {
 
-/// Composes flight + character fixed steps (and shared damage convergence).
+/// Composes character + flight + world (floating origin / streaming) fixed steps.
 /// Registered as the engine FixedStepFn — do not replace with flight alone.
 void fixed_step(flecs::world& world, f32 dt);
 

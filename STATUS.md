@@ -26,7 +26,15 @@
   - [x] P1B-08 Interior nave: LocalToShip (sim local; world Pose solo render)
   - [x] P1B-09 Escena `on_foot_test` (interior → EVA → estación)
 - P1C Economía/Misiones:  [.......] 0/8  tareas
-- P1D Universo fijo:      [........] 0/8  tareas
+- P1D Universo fijo:      [########] 8/8  tareas — COMPLETADA (P1D-04 naming parcial)
+  - [x] P1D-01 Esquema coordenadas: **floating origin** (f32 relativo; sin f64 mundo)
+  - [x] P1D-07 Rebase FloatingOrigin cuando |player| > threshold
+  - [x] P1D-02 StarSystemData desde `assets/data/star_system.cfg`
+  - [x] P1D-04 Esqueleto + placeholders (naming final bloqueado)
+  - [x] P1D-03 LevelStreamTrigger proximidad (InteriorLoaded / InstanceTag soft)
+  - [x] P1D-05 Estación como interior navegable (StationRoot + LocalToShip / GravityZone)
+  - [x] P1D-06 Transición espacio → zona aterrizaje prefab (Planeta-01-LZ)
+  - [x] P1D-08 Escena `universe_test` + overlay rebase_count
 - P1E UI/HUD/Audio:       [.......] 0/7  tareas
 - P1F Persistencia:       [......] 0/6  tareas
 
@@ -37,12 +45,30 @@
 | `flight_test` | P1A OK — nave + objetivo a 50m |
 | `on_foot_test` | P1B OK — interior LocalToShip → hatch EVA → estación + FPS target |
 | `economy_test` | pendiente P1C-09 |
-| `universe_test` | pendiente P1D-08 |
+| `universe_test` | P1D OK — Estacion-Alfa → espacio (rebase ≥1) → Planeta-01-LZ |
 | `ui_audio_test` | pendiente P1E-07 |
 | `save_load_test` | pendiente P1F-06 |
 
 ## Bloqueado (requiere decisión de Miguel)
 - P1D-04 naming final del sistema estelar (placeholders OK: Sistema-01 / Estacion-Alfa / Planeta-01).
+  Esqueleto técnico + cfg + escena listos; solo falta identidad/lore/nombres finales.
+
+## Contrato floating origin (P1D-01 / P1D-07) — Fase 4 / Fase 5 dependen de esto
+
+**Decisión elegida: floating origin (f32 relativo).** Alternativa f64 world-pos **rechazada** — no mezclar.
+
+| Campo | Valor |
+|---|---|
+| Esquema | f32 relative to current origin; absolute ≈ relative + `FloatingOrigin.origin_offset` |
+| Umbral de rebase | **2000 m** (`kFloatingOriginThreshold` / `FloatingOrigin.threshold`) |
+| Disparo | `\|player_pos_relative\| > threshold` (nave `RigidBody6DOF` o personaje world / LocalToShip→world) |
+| Acción | Una pasada O(n): resta `player_pos` de Position, PreviousPosition, RigidBody6DOF.position, GravityZone.center, LevelStreamTrigger.center, Camera3D eye/target; `origin_offset += delta`; `rebase_count++` |
+| LocalToShip | `local_position` **no** se desplaza (espacio nave); caches world se re-sincronizan |
+| Cuándo | Solo en `game::world::fixed_step` (vía `game::fixed_step`) — nunca en el render loop |
+| Archetypes | Solo writes in-place; sin delete mid-iteration |
+| Overlay | Debug UI muestra `rebase_count` (sección World) |
+
+Headers de contrato: `include/game/world/world.hpp`, comentario en `ecs::Position` (`include/engine/ecs/world.hpp`).
 
 ## Contrato LocalToShip (P1B-08) — Fase 2 / Fase 5 dependen de esto
 Cuando una entidad lleva `LocalToShip { ship_entity, local_position, local_orientation }`:
@@ -55,6 +81,7 @@ Cuando una entidad lleva `LocalToShip { ship_entity, local_position, local_orien
 5. Al salir (quitar `LocalToShip`), se bakea la pose mundial y la sim pasa a espacio mundo / GravityZone.
 
 ## Bitácora (más reciente arriba, una línea por tarea)
+- 2026-08-10 [P1D-01..08] Floating origin (threshold 2000 m); StarSystemData+cfg placeholders; LevelStreamTrigger soft load; station LocalToShip+GravityZone; landing LZ; `--scene=universe_test`; debug rebase_count.
 - 2026-08-10 [P1B-01..09] Character: kinematic capsule + GravityZone/EVA; LocalToShip interior; OnFoot cam 1st/3rd; hatch/pilot Interact; FPS→DamageEvent+Health; scene `--scene=on_foot_test`; `game::fixed_step` = character then flight.
 - 2026-08-10 [P1A-01..10] Flight: RigidBody6DOF mass=45t, main thrust 320kN, coupled brake 280kN; projectile pool 32; target @ z=-50; scene `--scene=flight_test`. Engine: Orientation, KinematicFromRigidBody, FixedStepHook, ControlMode, Actions Roll/ToggleCoupled.
 - 2026-08-10 Fase 0 validada por usuario ("Ok"). Apertura Fase 1 — rama `release/fase-1-vertical-slice`.

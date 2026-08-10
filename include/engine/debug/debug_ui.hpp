@@ -38,7 +38,7 @@ struct DebugUiStats {
     f32  hull_hp            = -1.f;
     f32  hull_max_hp        = 0.f;
     bool coupled            = false;
-    u32  rebase_count       = 0; // reserved for Fase 1D floating origin
+    u32  rebase_count       = 0; // P1D floating-origin rebases (FloatingOrigin)
 
     /// On-foot telemetry (P1B) — shown when has_character_telemetry is true.
     bool has_character_telemetry = false;

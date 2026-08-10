@@ -352,6 +352,10 @@ int main(int argc, char** argv)
             char_found);
         ui_stats.has_character_telemetry = char_found;
 
+        bool world_found = false;
+        game::world::fill_world_telemetry(world, ui_stats.rebase_count, world_found);
+        (void)world_found;
+
         debug::DebugUiState* ui_ptr = debug_ui.ready ? &debug_ui : nullptr;
         if (ui_ptr != nullptr) {
             debug::debug_ui_begin_frame(debug_ui);
