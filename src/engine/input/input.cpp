@@ -65,6 +65,18 @@ void input_set_default_bindings(InputSystem& sys)
     add_binding(sys, BindingDevice::MouseButton, GLFW_MOUSE_BUTTON_LEFT, Action::Fire);
     add_binding(sys, BindingDevice::Keyboard, GLFW_KEY_F, Action::Interact);
     add_binding(sys, BindingDevice::Keyboard, GLFW_KEY_LEFT_SHIFT, Action::Thrust);
+
+    // Flight: Z/X roll, Left Alt toggles coupled mode (Q/E remain vertical).
+    add_binding(sys, BindingDevice::Keyboard, GLFW_KEY_Z, Action::RollLeft);
+    add_binding(sys, BindingDevice::Keyboard, GLFW_KEY_X, Action::RollRight);
+    add_binding(sys, BindingDevice::Keyboard, GLFW_KEY_LEFT_ALT, Action::ToggleCoupled);
+
+    // P1E: Esc toggles pause menu / SimulationPaused.
+    add_binding(sys, BindingDevice::Keyboard, GLFW_KEY_ESCAPE, Action::Pause);
+
+    // P1F: F5 quicksave / F9 quickload.
+    add_binding(sys, BindingDevice::Keyboard, GLFW_KEY_F5, Action::QuickSave);
+    add_binding(sys, BindingDevice::Keyboard, GLFW_KEY_F9, Action::QuickLoad);
 }
 
 void input_set_config(InputSystem& sys, const InputConfig& config)

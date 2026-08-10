@@ -25,3 +25,7 @@ compile_commands.json
 # OS
 .DS_Store
 Thumbs.db
+imgui.ini
+
+# Local save slots (P1F)
+/saves/*.sav

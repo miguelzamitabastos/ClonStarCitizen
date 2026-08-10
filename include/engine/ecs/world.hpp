@@ -12,6 +12,12 @@
 namespace csc::ecs {
 
 /// Plain POD components — Flecs stores them contiguously in archetypes.
+///
+/// Floating-origin contract (P1D-01 / P1D-07) — see also game/world/world.hpp:
+/// Position stores f32 coordinates relative to FloatingOrigin (never absolute f64).
+/// Absolute world ≈ relative + FloatingOrigin.origin_offset. On rebase, all
+/// Position / PreviousPosition values are shifted in-place; do not introduce a
+/// parallel f64 world-position path. LocalToShip.local_position stays ship-local.
 struct Position {
     f32 x = 0.f;
     f32 y = 0.f;
@@ -31,10 +37,18 @@ struct Velocity {
     f32 z = 0.f;
 };
 
+/// Optional world orientation for renderables (identity if missing).
+struct Orientation {
+    glm::quat q{1.f, 0.f, 0.f, 0.f};
+};
+
 /// Tag: entity participates in the shared-mesh instanced draw (P0-09).
 struct InstanceTag {};
 
-/// Uniform scale for instanced demo meshes (model = T * S).
+/// Tag: Position is driven by a game rigid-body integrator — skip Velocity integrate.
+struct KinematicFromRigidBody {};
+
+/// Uniform scale for instanced demo meshes (model = T * R * S when Orientation present).
 struct Scale {
     f32 value = 1.f;
 };
@@ -63,6 +77,17 @@ struct Camera3D {
     glm::mat4 projection{1.f};
 };
 
+/// Who drives the primary camera (singleton).
+enum class ControlModeKind : u8 {
+    FreeLook = 0,
+    ShipPilot,
+    OnFoot,
+};
+
+struct ControlMode {
+    ControlModeKind mode = ControlModeKind::FreeLook;
+};
+
 /// Flecs singleton: logical action snapshot polled once per frame in main.
 struct InputActions {
     input::ActionState state{};
@@ -87,6 +112,9 @@ struct FrameTimeState {
     u32 max_steps_per_frame = 5;   // spiral-of-death guard
 };
 
+/// Optional fixed-step hook for game modules (flight, etc.). Called after simple integrate.
+using FixedStepFn = void (*)(flecs::world&, f32);
+
 /// Linear blend Previous→current for renderables (alpha from FrameInterpolation).
 [[nodiscard]] inline Position lerp_position(
     const PreviousPosition& prev, const Position& curr, f32 alpha)
@@ -108,7 +136,11 @@ void world_bind_camera_input(flecs::world& world, const CameraControlParams& par
 /// Store fixed step duration (from AppConfig.physics_fixed_hz) and ensure FrameInterpolation.
 void world_set_fixed_dt(flecs::world& world, f32 fixed_dt);
 
+/// Register a game fixed-step callback (or nullptr to clear). No heap.
+void world_set_fixed_step_hook(FixedStepFn fn);
+
 /// Fixed-step integrate: snapshot Position→PreviousPosition, then apply Velocity * fixed_dt.
+/// Skips entities tagged KinematicFromRigidBody (driven by RigidBody6DOF elsewhere).
 /// Call only from the fixed-timestep loop (not from world_progress).
 void physics_integrate_positions(flecs::world& world, f32 fixed_dt);
 
@@ -127,6 +159,7 @@ void world_spawn_centered_instance(flecs::world& world, f32 scale = 1.5f);
 
 /// Gather interpolated model matrices for InstanceTag entities into a fixed caller buffer.
 /// Returns number written (clamped to capacity). No heap — writes into `out_models`.
+/// Uses T*R*S when Orientation is present, else T*S.
 [[nodiscard]] u32 world_gather_instance_transforms(
     flecs::world& world,
     f32 alpha,

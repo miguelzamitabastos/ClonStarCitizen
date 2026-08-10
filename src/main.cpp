@@ -17,10 +17,13 @@
 #include "game/economy/economy.hpp"
 #include "game/flight/flight.hpp"
 #include "game/save/save.hpp"
+#include "game/tick.hpp"
 #include "game/ui/ui.hpp"
 #include "game/world/world.hpp"
 
 #include <chrono>
+#include <cstdio>
+#include <cstdlib>
 
 namespace {
 
@@ -57,6 +60,16 @@ int main(int argc, char** argv)
     config::config_apply_argv(app_config, argc, argv);
     log::log_set_min_level(app_config.log_level);
 
+    // CSC_SAVE_SMOKE implies the persistence demo scene unless argv already set it.
+    if (const char* smoke = std::getenv("CSC_SAVE_SMOKE");
+        smoke != nullptr && smoke[0] == '1') {
+        std::snprintf(
+            app_config.scene_name,
+            sizeof(app_config.scene_name),
+            "%s",
+            "save_load_test");
+    }
+
     memory::Arena level_arena{};
     if (!memory::arena_create(level_arena, kLevelArenaBytes)) {
         log::log_error(log::LogCategory::Core, "Failed to create level arena.");
@@ -73,6 +86,7 @@ int main(int argc, char** argv)
     flecs::world world{};
     ecs::world_register_systems(world);
     register_game_systems(world);
+    ecs::world_set_fixed_step_hook(&game::fixed_step);
 
     ecs::FrameTimeState frame_time{};
     const f32 physics_hz =
@@ -130,6 +144,19 @@ int main(int argc, char** argv)
         memory::arena_destroy(asset_arena);
         memory::arena_destroy(level_arena);
         return 1;
+    }
+
+    // P1F automated check: CSC_SAVE_SMOKE=1 → save/load/verify then exit (no GPU needed).
+    if (const char* smoke = std::getenv("CSC_SAVE_SMOKE");
+        smoke != nullptr && smoke[0] == '1') {
+        game::save::ensure_singletons(world);
+        const bool ok = game::save::run_smoke_test(world);
+        input::input_shutdown(input_sys);
+        platform::window_destroy(window);
+        platform::window_shutdown_subsystem();
+        memory::arena_destroy(asset_arena);
+        memory::arena_destroy(level_arena);
+        return ok ? 0 : 2;
     }
 
     ecs::Grid3D grid_scratch{};
@@ -241,6 +268,13 @@ int main(int argc, char** argv)
     (void)debug::debug_ui_init(debug_ui, window.handle, vk_instance, vk_device, vk_renderer);
 #endif
 
+    game::audio::AudioEngine& audio_engine = game::audio::audio_engine_storage();
+    if (!game::audio::audio_init(audio_engine)) {
+        log::log_warn(log::LogCategory::Game, "Audio init failed — continuing silent.");
+    }
+    game::audio::audio_bind_world(world, audio_engine);
+    game::ui::ensure_singletons(world);
+
     log::log_info(
         log::LogCategory::Core,
         "ClonStarCitizen online — scene=%s instances=%u flecs_pos=%zu asset_arena=%zu/%zu "
@@ -281,9 +315,36 @@ int main(int argc, char** argv)
 
         input::input_poll(input_sys, action_scratch);
 
-        if (debug::debug_ui_want_capture_mouse(debug_ui) || debug_ui.cursor_for_ui) {
+        bool ui_cursor = false;
+        game::ui::frame_update(world, action_scratch, window.handle, ui_cursor);
+
+        // P1F: F5/F9 before pause swallow so quicksave works while paused.
+        game::save::frame_poll(world, action_scratch);
+
+        if (debug::debug_ui_want_capture_mouse(debug_ui) || debug_ui.cursor_for_ui
+            || ui_cursor) {
             action_scratch.axes[static_cast<u16>(input::ActionAxis::LookX)] = 0.f;
             action_scratch.axes[static_cast<u16>(input::ActionAxis::LookY)] = 0.f;
+        }
+        // While paused, swallow gameplay buttons so fire/thrust don't latch.
+        if (game::ui::is_simulation_paused(world)) {
+            for (u16 i = 0; i < input::kActionCount; ++i) {
+                if (i == static_cast<u16>(input::Action::Pause)
+                    || i == static_cast<u16>(input::Action::QuickSave)
+                    || i == static_cast<u16>(input::Action::QuickLoad)) {
+                    continue;
+                }
+                action_scratch.pressed[i]       = false;
+                action_scratch.just_pressed[i]  = false;
+                action_scratch.just_released[i] = false;
+            }
+            for (u16 i = 0; i < input::kActionAxisCount; ++i) {
+                if (i == static_cast<u16>(input::ActionAxis::LookX)
+                    || i == static_cast<u16>(input::ActionAxis::LookY)) {
+                    continue;
+                }
+                action_scratch.axes[i] = 0.f;
+            }
         }
         world.set<ecs::InputActions>({action_scratch});
 
@@ -301,7 +362,15 @@ int main(int argc, char** argv)
                 : (fps_ema + kFpsEmaAlpha * (instant_fps - fps_ema));
         }
 
-        ecs::world_tick(world, frame_time, dt);
+        // P1E: pause freezes fixed sim but keeps rendering (and ImGui).
+        if (game::ui::is_simulation_paused(world)) {
+            world.set<ecs::FrameInterpolation>({frame_time.alpha});
+            ecs::world_progress(world, 0.f);
+        } else {
+            ecs::world_tick(world, frame_time, dt);
+        }
+
+        game::audio::frame_update(world, audio_engine);
 
         if (!ecs::world_try_get_primary_camera(world, camera_scratch)) {
             log::log_error(log::LogCategory::Ecs, "Primary Camera3D missing; exiting.");
@@ -325,10 +394,54 @@ int main(int argc, char** argv)
         ui_stats.cam_y          = camera_scratch.eye.y;
         ui_stats.cam_z          = camera_scratch.eye.z;
 
+        bool ship_found = false;
+        game::flight::fill_player_telemetry(
+            world,
+            ui_stats.speed,
+            ui_stats.energy,
+            ui_stats.energy_capacity,
+            ui_stats.shield_pct,
+            ui_stats.hull_hp,
+            ui_stats.hull_max_hp,
+            ui_stats.coupled,
+            ship_found);
+        ui_stats.has_ship_telemetry = ship_found;
+
+        bool char_found = false;
+        game::character::fill_player_telemetry(
+            world,
+            ui_stats.health,
+            ui_stats.health_max,
+            ui_stats.ammo,
+            ui_stats.ammo_max,
+            ui_stats.grounded,
+            ui_stats.eva,
+            char_found);
+        ui_stats.has_character_telemetry = char_found;
+
+        game::economy::EconomyDebugSnapshot eco{};
+        game::economy::fill_economy_telemetry(world, eco);
+        ui_stats.has_economy_telemetry = eco.has_data;
+        ui_stats.credits               = eco.credits;
+        ui_stats.cargo_units           = eco.cargo_units;
+        ui_stats.active_missions       = eco.active_missions;
+        std::snprintf(
+            ui_stats.cargo_summary, sizeof(ui_stats.cargo_summary), "%s", eco.cargo_summary);
+        std::snprintf(
+            ui_stats.mission_summary,
+            sizeof(ui_stats.mission_summary),
+            "%s",
+            eco.mission_summary);
+
+        bool world_found = false;
+        game::world::fill_world_telemetry(world, ui_stats.rebase_count, world_found);
+        (void)world_found;
+
         debug::DebugUiState* ui_ptr = debug_ui.ready ? &debug_ui : nullptr;
         if (ui_ptr != nullptr) {
             debug::debug_ui_begin_frame(debug_ui);
             debug::debug_ui_build(debug_ui, ui_stats);
+            game::ui::frame_draw(world);
         }
 
         if (!vulkan::renderer_draw_frame(
@@ -349,6 +462,7 @@ int main(int argc, char** argv)
     if (mesh_loader_started) {
         assets::mesh_loader_shutdown(mesh_loader);
     }
+    game::audio::audio_shutdown(audio_engine);
     debug::debug_ui_shutdown(debug_ui, vk_device);
     vulkan::renderer_destroy(vk_renderer, vk_device);
     vulkan::device_destroy(vk_device, vk_instance);

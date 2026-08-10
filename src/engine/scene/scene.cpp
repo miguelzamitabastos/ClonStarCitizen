@@ -1,6 +1,13 @@
 #include "engine/scene/scene.hpp"
 
 #include "engine/log/log.hpp"
+#include "game/audio/audio.hpp"
+#include "game/character/character.hpp"
+#include "game/economy/economy.hpp"
+#include "game/flight/flight.hpp"
+#include "game/save/save.hpp"
+#include "game/ui/ui.hpp"
+#include "game/world/world.hpp"
 
 #include <cstdio>
 #include <cstring>
@@ -47,6 +54,305 @@ bool setup_mesh_viewer(SceneContext& ctx)
     return true;
 }
 
+bool setup_flight_test(SceneContext& ctx)
+{
+    if (ctx.world == nullptr) {
+        return false;
+    }
+
+    ecs::world_spawn_default_camera(*ctx.world, ctx.aspect);
+    ecs::world_spawn_default_grid(*ctx.world);
+
+    // Ship at (0,5,0); static asteroid ~50m ahead along -Z (ship forward).
+    game::flight::spawn_projectile_pool(*ctx.world);
+    (void)game::flight::spawn_player_ship(*ctx.world, glm::vec3{0.f, 5.f, 0.f});
+    (void)game::flight::spawn_damage_target(*ctx.world, glm::vec3{0.f, 5.f, -50.f}, 5.f);
+
+    ctx.world->set<ecs::ControlMode>({ecs::ControlModeKind::ShipPilot});
+
+    ctx.needs_shared_mesh = true;
+    // Player + target + up to kProjectilePoolSize when firing (capacity for gather).
+    ctx.instance_count =
+        2u + static_cast<u32>(game::flight::kProjectilePoolSize);
+    return true;
+}
+
+bool setup_on_foot_test(SceneContext& ctx)
+{
+    if (ctx.world == nullptr) {
+        return false;
+    }
+
+    ecs::world_spawn_default_camera(*ctx.world, ctx.aspect);
+    ecs::world_spawn_default_grid(*ctx.world);
+
+    game::flight::spawn_projectile_pool(*ctx.world);
+
+    // Moving ship — coasts while OnFoot so LocalToShip interior is visible.
+    flecs::entity ship =
+        game::flight::spawn_player_ship(*ctx.world, glm::vec3{0.f, 8.f, 0.f});
+    if (game::flight::RigidBody6DOF* rb = ship.try_get_mut<game::flight::RigidBody6DOF>()) {
+        rb->linear_vel = glm::vec3{1.8f, 0.f, 0.f};
+    }
+    if (game::flight::FlightControl* fc = ship.try_get_mut<game::flight::FlightControl>()) {
+        fc->coupled = false;
+    }
+
+    // Player starts inside the ship (authoritative LocalToShip).
+    (void)game::character::spawn_player_character(
+        *ctx.world, glm::vec3{0.f, 0.9f, 0.f}, ship.id());
+
+    (void)game::character::spawn_ship_hatch(
+        *ctx.world, ship.id(), glm::vec3{0.f, 0.9f, 3.2f}, "Exit / Enter hatch");
+    (void)game::character::spawn_pilot_seat(
+        *ctx.world, ship.id(), glm::vec3{0.f, 0.9f, -1.5f}, "Pilot seat");
+
+    // Interior gravity is artificial (LocalToShip path). Station pad has a world zone.
+    constexpr glm::vec3 kStationCenter{45.f, 2.f, 0.f};
+    (void)game::character::spawn_gravity_zone_box(
+        *ctx.world,
+        kStationCenter,
+        glm::vec3{12.f, 6.f, 12.f},
+        glm::vec3{0.f, -1.f, 0.f},
+        game::character::kGravityDefault,
+        "StationGravity");
+
+    // Station deck marker + terminal interactable.
+    {
+        const ecs::Position pos{kStationCenter.x, 0.5f, kStationCenter.z};
+        ctx.world->entity("StationDeck")
+            .set<ecs::Position>(pos)
+            .set<ecs::PreviousPosition>({pos.x, pos.y, pos.z})
+            .set<ecs::Velocity>({0.f, 0.f, 0.f})
+            .set<ecs::Scale>({8.f})
+            .add<ecs::InstanceTag>();
+    }
+    (void)game::character::spawn_station_interactable(
+        *ctx.world,
+        glm::vec3{kStationCenter.x, 1.2f, kStationCenter.z - 3.f},
+        "Station terminal");
+
+    // Dummy FPS combat target on the station pad.
+    (void)game::character::spawn_health_target(
+        *ctx.world, glm::vec3{kStationCenter.x + 4.f, 1.2f, kStationCenter.z}, 1.8f);
+
+    ctx.world->set<ecs::ControlMode>({ecs::ControlModeKind::OnFoot});
+
+    ctx.needs_shared_mesh = true;
+    // ship + player + hatch + seat + station deck + terminal + health target + projectiles
+    ctx.instance_count = 7u + static_cast<u32>(game::flight::kProjectilePoolSize);
+    return true;
+}
+
+bool setup_economy_test(SceneContext& ctx)
+{
+    if (ctx.world == nullptr) {
+        return false;
+    }
+    if (!game::economy::setup_economy_test_scene(*ctx.world, ctx.aspect)) {
+        return false;
+    }
+    ctx.needs_shared_mesh = true;
+    // 2 decks + ship + player + 2 traders + 2 mission NPCs + 2 pads + projectiles
+    ctx.instance_count = 10u + static_cast<u32>(game::flight::kProjectilePoolSize);
+    return true;
+}
+
+bool setup_universe_test(SceneContext& ctx)
+{
+    if (ctx.world == nullptr) {
+        return false;
+    }
+
+    ecs::world_spawn_default_camera(*ctx.world, ctx.aspect);
+    ecs::world_spawn_default_grid(*ctx.world);
+
+    game::world::StarSystemData system{};
+    (void)game::world::load_star_system_config(system, "assets/data/star_system.cfg");
+
+    (void)game::world::spawn_universe_test(*ctx.world, system);
+
+    ctx.needs_shared_mesh = true;
+    // Station + star + planet + ship + streamed props (when loaded) + projectiles.
+    ctx.instance_count = 16u + static_cast<u32>(game::flight::kProjectilePoolSize);
+    return true;
+}
+
+bool setup_ui_audio_test(SceneContext& ctx)
+{
+    if (ctx.world == nullptr) {
+        return false;
+    }
+
+    ecs::world_spawn_default_camera(*ctx.world, ctx.aspect);
+    ecs::world_spawn_default_grid(*ctx.world);
+
+    game::ui::ensure_singletons(*ctx.world);
+    {
+        game::ui::UiMenuState menus{};
+        menus.hud_mode = game::ui::HudDisplayMode::Both;
+        ctx.world->set<game::ui::UiMenuState>(menus);
+        ctx.world->set<game::ui::SimulationPaused>({false});
+    }
+
+    // Star system for pause → System Map.
+    game::world::StarSystemData system{};
+    (void)game::world::load_star_system_config(system, "assets/data/star_system.cfg");
+    ctx.world->set<game::world::StarSystemData>(system);
+    ctx.world->set<game::world::FloatingOrigin>(game::world::FloatingOrigin{});
+
+    (void)game::economy::load_economy_data(*ctx.world);
+
+    game::flight::spawn_projectile_pool(*ctx.world);
+    flecs::entity ship =
+        game::flight::spawn_player_ship(*ctx.world, glm::vec3{0.f, 5.f, 0.f});
+    game::economy::attach_cargo_hold_if_missing(ship);
+    (void)game::flight::spawn_damage_target(*ctx.world, glm::vec3{0.f, 5.f, -40.f}, 4.f);
+
+    // Seed cargo + an active mission for inventory / mission-log menus.
+    if (game::economy::CargoHold* hold = ship.try_get_mut<game::economy::CargoHold>()) {
+        const game::economy::CommodityTable* table =
+            ctx.world->try_get<game::economy::CommodityTable>();
+        if (table != nullptr) {
+            (void)game::economy::cargo_add(*hold, *table, 1u, 3u);
+        }
+    }
+    if (game::economy::MissionActivePool* pool =
+            ctx.world->try_get_mut<game::economy::MissionActivePool>()) {
+        const game::economy::MissionTemplateTable* templates =
+            ctx.world->try_get<game::economy::MissionTemplateTable>();
+        if (templates != nullptr) {
+            (void)game::economy::mission_try_accept(*pool, *templates, 1u);
+        }
+    }
+
+    (void)game::character::spawn_player_character(
+        *ctx.world, glm::vec3{2.f, 1.f, 4.f}, 0);
+
+    // Three simultaneous looping positional tones at different ranges (P1E-07).
+    auto spawn_emitter = [&](const char* name, const glm::vec3& p, game::audio::SoundId snd,
+                             u32 key, f32 scale) {
+        game::audio::PositionalEmitter em{};
+        em.sound       = snd;
+        em.priority    = game::audio::kPriorityNormal;
+        em.gain        = 0.7f;
+        em.looping     = true;
+        em.emitter_key = key;
+        const ecs::Position pos{p.x, p.y, p.z};
+        ctx.world->entity(name)
+            .set<ecs::Position>(pos)
+            .set<ecs::PreviousPosition>({pos.x, pos.y, pos.z})
+            .set<ecs::Velocity>({0.f, 0.f, 0.f})
+            .set<ecs::Scale>({scale})
+            .set<game::audio::PositionalEmitter>(em)
+            .add<ecs::InstanceTag>();
+    };
+    spawn_emitter(
+        "AudioToneNear", glm::vec3{6.f, 2.f, -4.f}, game::audio::SoundId::ToneNear, 100u, 0.8f);
+    spawn_emitter(
+        "AudioToneMid", glm::vec3{-18.f, 3.f, -12.f}, game::audio::SoundId::ToneMid, 101u, 1.2f);
+    spawn_emitter(
+        "AudioToneFar", glm::vec3{35.f, 4.f, -50.f}, game::audio::SoundId::ToneFar, 102u, 1.6f);
+
+    ctx.world->set<ecs::ControlMode>({ecs::ControlModeKind::ShipPilot});
+
+    ctx.needs_shared_mesh = true;
+    // ship + target + character + 3 emitters + projectiles
+    ctx.instance_count = 6u + static_cast<u32>(game::flight::kProjectilePoolSize);
+
+    log::log_info(
+        log::LogCategory::Game,
+        "ui_audio_test: HUD Both | Esc=pause | 3 positional tones | fire/thrust SFX");
+    return true;
+}
+
+bool setup_save_load_test(SceneContext& ctx)
+{
+    if (ctx.world == nullptr) {
+        return false;
+    }
+
+    ecs::world_spawn_default_camera(*ctx.world, ctx.aspect);
+    ecs::world_spawn_default_grid(*ctx.world);
+
+    game::save::ensure_singletons(*ctx.world);
+    game::ui::ensure_singletons(*ctx.world);
+
+    game::world::StarSystemData system{};
+    (void)game::world::load_star_system_config(system, "assets/data/star_system.cfg");
+    ctx.world->set<game::world::StarSystemData>(system);
+
+    game::world::FloatingOrigin fo{};
+    fo.threshold     = game::world::kFloatingOriginThreshold;
+    fo.rebase_count  = 1; // non-zero so save/load can prove restore
+    fo.origin_offset = glm::vec3{100.f, 0.f, -50.f};
+    ctx.world->set<game::world::FloatingOrigin>(fo);
+
+    (void)game::economy::load_economy_data(*ctx.world);
+
+    game::flight::spawn_projectile_pool(*ctx.world);
+    flecs::entity ship =
+        game::flight::spawn_player_ship(*ctx.world, glm::vec3{12.f, 8.f, -30.f});
+    game::economy::attach_cargo_hold_if_missing(ship);
+
+    // Coasting in flight with modified hull / shield / power.
+    if (game::flight::RigidBody6DOF* rb = ship.try_get_mut<game::flight::RigidBody6DOF>()) {
+        rb->linear_vel = glm::vec3{0.f, 0.f, -18.f};
+    }
+    if (game::flight::FlightControl* fc = ship.try_get_mut<game::flight::FlightControl>()) {
+        fc->coupled = false;
+    }
+    if (game::flight::ShipHull* hull = ship.try_get_mut<game::flight::ShipHull>()) {
+        hull->hp = 720.f;
+    }
+    if (game::flight::ShieldGenerator* sh = ship.try_get_mut<game::flight::ShieldGenerator>()) {
+        sh->current = 210.f;
+    }
+    if (game::flight::PowerPlant* pp = ship.try_get_mut<game::flight::PowerPlant>()) {
+        pp->stored = 640.f;
+    }
+
+    // Cargo + wallet + reputation + active mission.
+    if (game::economy::CargoHold* hold = ship.try_get_mut<game::economy::CargoHold>()) {
+        const game::economy::CommodityTable* table =
+            ctx.world->try_get<game::economy::CommodityTable>();
+        if (table != nullptr) {
+            (void)game::economy::cargo_add(*hold, *table, 1u, 5u);
+            (void)game::economy::cargo_add(*hold, *table, 2u, 2u);
+        }
+    }
+    ctx.world->set<game::economy::PlayerWallet>({750});
+    {
+        game::economy::FactionReputation rep{};
+        rep.values[0] = 12.5f;
+        rep.values[1] = -3.f;
+        ctx.world->set<game::economy::FactionReputation>(rep);
+    }
+    if (game::economy::MissionActivePool* pool =
+            ctx.world->try_get_mut<game::economy::MissionActivePool>()) {
+        const game::economy::MissionTemplateTable* templates =
+            ctx.world->try_get<game::economy::MissionTemplateTable>();
+        if (templates != nullptr) {
+            (void)game::economy::mission_try_accept(*pool, *templates, 1u);
+        }
+    }
+
+    // Character in EVA near the ship (world space — proves Health restore).
+    (void)game::character::spawn_player_character(
+        *ctx.world, glm::vec3{14.f, 7.5f, -28.f}, 0);
+
+    ctx.world->set<ecs::ControlMode>({ecs::ControlModeKind::ShipPilot});
+
+    ctx.needs_shared_mesh = true;
+    ctx.instance_count    = 3u + static_cast<u32>(game::flight::kProjectilePoolSize);
+
+    log::log_info(
+        log::LogCategory::Game,
+        "save_load_test: F5=QuickSave F9=QuickLoad | Esc pause → Save/Load Slot0 | "
+        "ship in flight + cargo + mission + modified reputation");
+    return true;
+}
+
 constexpr SceneDesc kScenes[] = {
     {"grid_freelook",
      "Free-look camera + ground grid (minimal baseline)",
@@ -57,6 +363,24 @@ constexpr SceneDesc kScenes[] = {
     {"mesh_viewer",
      "Single centered cube mesh + free-look (glTF upload check)",
      &setup_mesh_viewer},
+    {"flight_test",
+     "Pilotable ship + thrusters/shields/weapons + damage target (P1A)",
+     &setup_flight_test},
+    {"on_foot_test",
+     "Ship interior → EVA → station gravity + FPS combat (P1B)",
+     &setup_on_foot_test},
+    {"economy_test",
+     "Buy ore@A → travel B → sell margin + delivery mission (P1C)",
+     &setup_economy_test},
+    {"universe_test",
+     "Fixed star system: station ↔ open space (rebase) ↔ planetary LZ (P1D)",
+     &setup_universe_test},
+    {"ui_audio_test",
+     "Flight+on-foot HUD, pause menus, ≥3 positional tones (P1E)",
+     &setup_ui_audio_test},
+    {"save_load_test",
+     "Persist ship/cargo/mission/rep; F5 save F9 load (P1F)",
+     &setup_save_load_test},
 };
 
 constexpr std::size_t kSceneCount = sizeof(kScenes) / sizeof(kScenes[0]);

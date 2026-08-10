@@ -15,6 +15,12 @@ enum class Action : u16 {
     Fire,
     Interact,
     Thrust,
+    ToggleCoupled,
+    RollLeft,
+    RollRight,
+    Pause, // Esc — toggle SimulationPaused / pause menu (P1E)
+    QuickSave, // F5 — P1F
+    QuickLoad, // F9 — P1F
     Count
 };
 

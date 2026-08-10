@@ -28,6 +28,34 @@ struct DebugUiStats {
     f32  cam_x          = 0.f;
     f32  cam_y          = 0.f;
     f32  cam_z          = 0.f;
+
+    /// Flight telemetry (P1A) — shown when has_ship_telemetry is true.
+    bool has_ship_telemetry = false;
+    f32  speed              = 0.f;
+    f32  energy             = 0.f;
+    f32  energy_capacity    = 0.f;
+    f32  shield_pct         = 0.f;
+    f32  hull_hp            = -1.f;
+    f32  hull_max_hp        = 0.f;
+    bool coupled            = false;
+    u32  rebase_count       = 0; // P1D floating-origin rebases (FloatingOrigin)
+
+    /// On-foot telemetry (P1B) — shown when has_character_telemetry is true.
+    bool has_character_telemetry = false;
+    f32  health                  = -1.f;
+    f32  health_max              = 0.f;
+    u32  ammo                    = 0;
+    u32  ammo_max                = 0;
+    bool grounded                = false;
+    bool eva                     = false;
+
+    /// Economy telemetry (P1C) — shown when has_economy_telemetry is true.
+    bool has_economy_telemetry = false;
+    i32  credits               = 0;
+    u32  cargo_units           = 0;
+    u32  active_missions       = 0;
+    char cargo_summary[64]{};
+    char mission_summary[48]{};
 };
 
 /// ImGui overlay state — plain POD + Vulkan resources owned here.

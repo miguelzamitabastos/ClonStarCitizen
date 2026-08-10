@@ -13,6 +13,8 @@ struct FixedDt {
     f32 seconds = 1.f / 60.f;
 };
 
+FixedStepFn g_fixed_step_hook = nullptr;
+
 [[nodiscard]] glm::vec3 forward_from_yaw_pitch(float yaw, float pitch)
 {
     const float cy = std::cos(yaw);
@@ -43,6 +45,11 @@ void world_register_systems(flecs::world& world)
     world.system<Camera3D>("CameraControlSystem")
         .kind(camera_control_phase)
         .each([](flecs::iter& it, size_t /*index*/, Camera3D& cam) {
+            const ControlMode* mode = it.world().try_get<ControlMode>();
+            if (mode != nullptr && mode->mode != ControlModeKind::FreeLook) {
+                return;
+            }
+
             const InputActions* actions = it.world().try_get<InputActions>();
             if (actions == nullptr) {
                 return;
@@ -107,6 +114,9 @@ void world_bind_camera_input(flecs::world& world, const CameraControlParams& par
 {
     world.set<CameraControlParams>(params);
     world.set<InputActions>(InputActions{});
+    if (world.try_get<ControlMode>() == nullptr) {
+        world.set<ControlMode>(ControlMode{});
+    }
 }
 
 void world_set_fixed_dt(flecs::world& world, f32 fixed_dt)
@@ -116,10 +126,19 @@ void world_set_fixed_dt(flecs::world& world, f32 fixed_dt)
     world.set<FrameInterpolation>({0.f});
 }
 
+void world_set_fixed_step_hook(FixedStepFn fn)
+{
+    g_fixed_step_hook = fn;
+}
+
 void physics_integrate_positions(flecs::world& world, f32 fixed_dt)
 {
     // Contiguous archetype iteration — no heap. Snapshot then integrate with fixed_dt.
-    world.each([fixed_dt](PreviousPosition& prev, Position& p, const Velocity& v) {
+    // Ships tagged KinematicFromRigidBody are integrated by flight::fixed_step instead.
+    world.each([fixed_dt](flecs::entity e, PreviousPosition& prev, Position& p, const Velocity& v) {
+        if (e.has<KinematicFromRigidBody>()) {
+            return;
+        }
         prev.x = p.x;
         prev.y = p.y;
         prev.z = p.z;
@@ -155,6 +174,9 @@ void world_tick(flecs::world& world, FrameTimeState& ft, f32 frame_dt)
     u32 steps = 0;
     while (ft.accumulator >= ft.fixed_dt && steps < ft.max_steps_per_frame) {
         physics_integrate_positions(world, ft.fixed_dt);
+        if (g_fixed_step_hook != nullptr) {
+            g_fixed_step_hook(world, ft.fixed_dt);
+        }
         ft.accumulator -= ft.fixed_dt;
         ++steps;
     }
@@ -229,15 +251,23 @@ u32 world_gather_instance_transforms(
 
     u32 written = 0;
     // Scale is only on InstanceTag entities (level-load spawn). Avoid binding empty tags.
-    world.each([&](const Position& p, const PreviousPosition& prev, const Scale& scale) {
+    world.each([&](flecs::entity e, const Position& p, const PreviousPosition& prev, const Scale& scale) {
         if (written >= capacity) {
+            return;
+        }
+        if (!e.has<InstanceTag>()) {
             return;
         }
         const Position lerped = lerp_position(prev, p, alpha);
         const glm::mat4 T = glm::translate(
             glm::mat4(1.f), glm::vec3{lerped.x, lerped.y, lerped.z});
         const glm::mat4 S = glm::scale(glm::mat4(1.f), glm::vec3{scale.value});
-        out_models[written++] = T * S;
+        if (const Orientation* ori = e.try_get<Orientation>()) {
+            const glm::mat4 R = glm::mat4_cast(ori->q);
+            out_models[written++] = T * R * S;
+        } else {
+            out_models[written++] = T * S;
+        }
     });
     return written;
 }

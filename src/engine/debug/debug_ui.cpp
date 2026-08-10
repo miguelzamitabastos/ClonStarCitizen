@@ -242,6 +242,43 @@ void debug_ui_build(DebugUiState& state, const DebugUiStats& stats)
             static_cast<double>(stats.cam_x),
             static_cast<double>(stats.cam_y),
             static_cast<double>(stats.cam_z));
+        if (stats.has_ship_telemetry || stats.hull_hp >= 0.f) {
+            ImGui::Separator();
+            ImGui::Text("— Flight —");
+            ImGui::Text("Speed: %.1f m/s", static_cast<double>(stats.speed));
+            ImGui::Text(
+                "Energy: %.0f / %.0f",
+                static_cast<double>(stats.energy),
+                static_cast<double>(stats.energy_capacity));
+            ImGui::Text("Shield: %.0f%%", static_cast<double>(stats.shield_pct * 100.f));
+            ImGui::Text(
+                "Hull: %.0f / %.0f",
+                static_cast<double>(stats.hull_hp),
+                static_cast<double>(stats.hull_max_hp));
+            ImGui::Text("Coupled: %s", stats.coupled ? "ON" : "OFF");
+        }
+        if (stats.has_character_telemetry || stats.health >= 0.f) {
+            ImGui::Separator();
+            ImGui::Text("— On Foot —");
+            ImGui::Text(
+                "Health: %.0f / %.0f",
+                static_cast<double>(stats.health),
+                static_cast<double>(stats.health_max));
+            ImGui::Text("Ammo: %u / %u", stats.ammo, stats.ammo_max);
+            ImGui::Text("Grounded: %s", stats.grounded ? "yes" : "no");
+            ImGui::Text("EVA: %s", stats.eva ? "yes" : "no");
+        }
+        if (stats.has_economy_telemetry) {
+            ImGui::Separator();
+            ImGui::Text("— Economy —");
+            ImGui::Text("Credits: %d", stats.credits);
+            ImGui::Text("Cargo units: %u", stats.cargo_units);
+            ImGui::Text("Cargo: %s", stats.cargo_summary);
+            ImGui::Text("Missions: %u (%s)", stats.active_missions, stats.mission_summary);
+        }
+        ImGui::Separator();
+        ImGui::Text("— World (P1D) —");
+        ImGui::Text("Floating-origin rebases: %u", stats.rebase_count);
         ImGui::Separator();
         ImGui::Text("F1: %s cursor for UI", state.cursor_for_ui ? "unlock" : "lock");
         ImGui::Text(
