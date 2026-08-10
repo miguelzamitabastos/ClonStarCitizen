@@ -155,6 +155,7 @@ set(ENGINE_SOURCES
     src/engine/debug/debug_ui.cpp
     src/game/flight/flight.cpp
     src/game/character/character.cpp
+    src/game/ai/ai.cpp
     src/game/tick.cpp
     src/game/economy/economy.cpp
     src/game/world/world.cpp

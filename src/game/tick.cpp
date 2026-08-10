@@ -1,5 +1,6 @@
 #include "game/tick.hpp"
 
+#include "game/ai/ai.hpp"
 #include "game/audio/audio.hpp"
 #include "game/character/character.hpp"
 #include "game/economy/economy.hpp"
@@ -16,6 +17,8 @@ void fixed_step(flecs::world& world, f32 dt)
         return;
     }
 
+    // AI decisions first (P2-11) so every actuation context reads fresh state/target.
+    ai::fixed_step(world, dt);
     // Character first so FPS DamageEvents land in the same tick as flight's drain.
     character::fixed_step(world, dt);
     flight::fixed_step(world, dt);

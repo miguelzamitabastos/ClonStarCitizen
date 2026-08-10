@@ -88,6 +88,40 @@ void draw_flight_hud(flecs::world& world)
         ImGui::TextUnformatted(line);
         std::snprintf(line, sizeof(line), "CPL  %s", coupled ? "ON" : "OFF");
         ImGui::TextUnformatted(line);
+
+        // P2-04: atmospheric vs vacuum flight regime.
+        if (const flight::AtmosphereSample* atmo = world.try_get<flight::AtmosphereSample>()) {
+            if (atmo->in_atmosphere) {
+                std::snprintf(
+                    line,
+                    sizeof(line),
+                    "ATM  %.2f kg/m3",
+                    static_cast<double>(atmo->density));
+            } else {
+                std::snprintf(line, sizeof(line), "ATM  VACUUM");
+            }
+            ImGui::TextUnformatted(line);
+        }
+
+        // P2-02: per-subsystem status (ENG / SHD-GEN / WPN / SEN).
+        flight::SubsystemTelemetry subs{};
+        flight::fill_player_subsystem_telemetry(world, subs);
+        if (subs.found) {
+            ImGui::Separator();
+            static constexpr const char* kSubNames[combat::kSubsystemCount] = {
+                "ENG", "SGN", "WPN", "SEN"};
+            for (u32 i = 0; i < combat::kSubsystemCount; ++i) {
+                const f32 pct = subs.efficiency[i] * 100.f;
+                if (pct <= 0.f) {
+                    std::snprintf(line, sizeof(line), "%s  OFFLINE", kSubNames[i]);
+                } else {
+                    std::snprintf(
+                        line, sizeof(line), "%s  %.0f%%", kSubNames[i],
+                        static_cast<double>(pct));
+                }
+                ImGui::TextUnformatted(line);
+            }
+        }
     }
     ImGui::End();
 }
@@ -124,6 +158,17 @@ void draw_on_foot_hud(flecs::world& world)
         ImGui::TextUnformatted(line);
         std::snprintf(line, sizeof(line), "AMMO %u / %u", ammo, ammo_max);
         ImGui::TextUnformatted(line);
+
+        // P2-05: equipped weapon + consumables (T cycle / G medkit / R reload).
+        character::InventoryTelemetry inv{};
+        character::fill_inventory_telemetry(world, inv);
+        if (inv.found) {
+            std::snprintf(line, sizeof(line), "WPN  %s", inv.weapon_name);
+            ImGui::TextUnformatted(line);
+            std::snprintf(
+                line, sizeof(line), "MED x%u  AMMO-PK x%u", inv.medkits, inv.ammo_packs);
+            ImGui::TextUnformatted(line);
+        }
         std::snprintf(
             line,
             sizeof(line),

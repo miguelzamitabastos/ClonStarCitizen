@@ -2,6 +2,7 @@
 
 #include "engine/ecs/world.hpp"
 #include "engine/log/log.hpp"
+#include "game/ai/ai.hpp"
 #include "game/character/character.hpp"
 #include "game/economy/economy.hpp"
 #include "game/save/save.hpp"
@@ -70,6 +71,28 @@ void build_default_thruster_set(ThrusterSet& set)
 [[nodiscard]] glm::vec3 world_to_body(const glm::quat& q, const glm::vec3& v)
 {
     return glm::conjugate(q) * v;
+}
+
+/// Build the DamageEvent for a weapon hit; rolls a hit-location subsystem
+/// (P2-02) when the target carries ShipSubsystems.
+[[nodiscard]] combat::DamageEvent make_weapon_hit_event(
+    flecs::world&   world,
+    flecs::entity_t target,
+    flecs::entity_t source,
+    f32             damage)
+{
+    combat::DamageEvent ev{};
+    ev.target = target;
+    ev.source = source;
+    ev.amount = damage;
+
+    flecs::entity te = world.entity(target);
+    if (te.is_alive() && te.has<ShipSubsystems>()) {
+        if (combat::CombatRng* rng = world.try_get_mut<combat::CombatRng>()) {
+            ev.subsystem = roll_hit_subsystem(rng->state);
+        }
+    }
+    return ev;
 }
 
 u32 collect_hull_targets(flecs::world& world, HullTarget* out, u32 capacity)
@@ -206,10 +229,49 @@ void sync_rigid_to_ecs(flecs::entity e, const RigidBody6DOF& rb, bool snapshot_p
     }
 }
 
+/// P2-03: camera behind the manned turret, looking along its aim direction.
+void update_turret_camera(flecs::world& world)
+{
+    const ActiveTurretControl* active = world.try_get<ActiveTurretControl>();
+    if (active == nullptr || active->turret == 0) {
+        return;
+    }
+    flecs::entity turret = world.entity(active->turret);
+    if (!turret.is_alive()) {
+        return;
+    }
+    const ecs::Position*    p = turret.try_get<ecs::Position>();
+    const ecs::Orientation* o = turret.try_get<ecs::Orientation>();
+    if (p == nullptr || o == nullptr) {
+        return;
+    }
+    const glm::vec3 pos{p->x, p->y, p->z};
+    const glm::vec3 aim = o->q * kShipForward;
+    const glm::vec3 up  = o->q * glm::vec3{0.f, 1.f, 0.f};
+
+    bool cam_updated = false;
+    world.each([&](ecs::Camera3D& cam) {
+        if (cam_updated) {
+            return;
+        }
+        cam.eye     = pos - aim * 2.4f + up * 1.1f;
+        cam.target  = pos + aim * 14.f;
+        cam.up      = up;
+        cam_updated = true;
+    });
+}
+
 void update_chase_camera(flecs::world& world)
 {
     const ecs::ControlMode* mode = world.try_get<ecs::ControlMode>();
-    if (mode == nullptr || mode->mode != ecs::ControlModeKind::ShipPilot) {
+    if (mode == nullptr) {
+        return;
+    }
+    if (mode->mode == ecs::ControlModeKind::TurretControl) {
+        update_turret_camera(world);
+        return;
+    }
+    if (mode->mode != ecs::ControlModeKind::ShipPilot) {
         return;
     }
 
@@ -285,36 +347,38 @@ void update_chase_camera(flecs::world& world)
     return best_target;
 }
 
-void try_fire_mount(
-    flecs::world&              world,
-    flecs::entity              ship,
-    RigidBody6DOF&             rb,
-    PowerPlant&                plant,
-    WeaponMount&               w,
-    const HullTarget*          targets,
-    u32                        target_count,
-    combat::DamageEventQueue*  dmg_q,
-    ProjectilePool*            pool)
+/// Cooldown / heat / energy gate. On success the cost is consumed.
+[[nodiscard]] bool weapon_try_consume(PowerPlant& plant, WeaponMount& w)
 {
     if (w.cooldown_remaining > 0.f || w.heat >= w.heat_max) {
-        return;
+        return false;
     }
     if (plant.frac_weapons < 0.15f || plant.stored < w.energy_cost) {
-        return;
+        return false;
     }
+    plant.stored         = std::max(0.f, plant.stored - w.energy_cost);
+    w.cooldown_remaining = w.cooldown;
+    w.heat               = std::min(w.heat_max, w.heat + 12.f);
+    return true;
+}
 
-    plant.stored             = std::max(0.f, plant.stored - w.energy_cost);
-    w.cooldown_remaining     = w.cooldown;
-    w.heat                   = std::min(w.heat_max, w.heat + 12.f);
-
-    const glm::vec3 muzzle = rb.position + body_to_world(rb.orientation, w.local_offset);
-    const glm::vec3 dir    = body_to_world(rb.orientation, kShipForward);
-
+/// Shared shot emission (fixed mounts P1A + turrets P2-03): hitscan or pool projectile.
+void weapon_emit(
+    flecs::world&             world,
+    flecs::entity_t           source,
+    const glm::vec3&          muzzle,
+    const glm::vec3&          dir,
+    const WeaponMount&        w,
+    const HullTarget*         targets,
+    u32                       target_count,
+    combat::DamageEventQueue* dmg_q,
+    ProjectilePool*           pool)
+{
     if (w.hitscan) {
         const flecs::entity_t hit =
-            raycast_hull(targets, target_count, ship.id(), muzzle, dir, w.range);
+            raycast_hull(targets, target_count, source, muzzle, dir, w.range);
         if (hit != 0 && dmg_q != nullptr) {
-            (void)dmg_q->push(combat::DamageEvent{hit, ship.id(), w.damage});
+            (void)dmg_q->push(make_weapon_hit_event(world, hit, source, w.damage));
         }
         return;
     }
@@ -338,7 +402,7 @@ void try_fire_mount(
         proj->velocity       = dir * kProjectileSpeed;
         proj->life_remaining = kProjectileLifetime;
         proj->damage         = w.damage;
-        proj->source         = ship.id();
+        proj->source         = source;
 
         const ecs::Position pos{muzzle.x, muzzle.y, muzzle.z};
         pe.set<ecs::Position>(pos);
@@ -348,6 +412,25 @@ void try_fire_mount(
         pe.add<ecs::InstanceTag>();
         break;
     }
+}
+
+void try_fire_mount(
+    flecs::world&              world,
+    flecs::entity              ship,
+    RigidBody6DOF&             rb,
+    PowerPlant&                plant,
+    WeaponMount&               w,
+    const HullTarget*          targets,
+    u32                        target_count,
+    combat::DamageEventQueue*  dmg_q,
+    ProjectilePool*            pool)
+{
+    if (!weapon_try_consume(plant, w)) {
+        return;
+    }
+    const glm::vec3 muzzle = rb.position + body_to_world(rb.orientation, w.local_offset);
+    const glm::vec3 dir    = body_to_world(rb.orientation, kShipForward);
+    weapon_emit(world, ship.id(), muzzle, dir, w, targets, target_count, dmg_q, pool);
 }
 
 void step_projectiles(
@@ -395,7 +478,8 @@ void step_projectiles(
         }
 
         if (hit && dmg_q != nullptr) {
-            (void)dmg_q->push(combat::DamageEvent{hit_target, proj.source, proj.damage});
+            (void)dmg_q->push(
+                make_weapon_hit_event(world, hit_target, proj.source, proj.damage));
         }
 
         if (hit || proj.life_remaining <= 0.f) {
@@ -452,8 +536,23 @@ void apply_damage_events(flecs::world& world)
                 remaining -= absorbed;
             }
             if (remaining > 0.f) {
+                // P2-02: subsystem-addressed hits split between the subsystem
+                // bank and hull bleed-through; destroyed banks pass all to hull.
+                f32 to_hull = remaining;
+                if (ev.subsystem != combat::Subsystem::None) {
+                    if (ShipSubsystems* subs = target.try_get_mut<ShipSubsystems>()) {
+                        SubsystemHealth& bank =
+                            subs->items[combat::subsystem_index(ev.subsystem)];
+                        if (bank.hp > 0.f) {
+                            const f32 to_subsystem =
+                                remaining * (1.f - kSubsystemHullBleed);
+                            bank.hp = std::max(0.f, bank.hp - to_subsystem);
+                            to_hull = remaining * kSubsystemHullBleed;
+                        }
+                    }
+                }
                 if (ShipHull* hull = target.try_get_mut<ShipHull>()) {
-                    hull->hp = std::max(0.f, hull->hp - remaining);
+                    hull->hp = std::max(0.f, hull->hp - to_hull);
                     if (hull->hp <= 0.f && destroyed_count < kMaxHullTargets) {
                         newly_destroyed[destroyed_count++] = target.id();
                     }
@@ -490,6 +589,241 @@ void apply_damage_events(flecs::world& world)
             e.add<character::CharacterDead>();
         }
     }
+}
+
+[[nodiscard]] f32 move_toward(f32 current, f32 desired, f32 max_delta)
+{
+    const f32 delta = desired - current;
+    if (delta > max_delta) {
+        return current + max_delta;
+    }
+    if (delta < -max_delta) {
+        return current - max_delta;
+    }
+    return desired;
+}
+
+[[nodiscard]] glm::vec3 target_world_pos(flecs::entity e)
+{
+    if (const RigidBody6DOF* rb = e.try_get<RigidBody6DOF>()) {
+        return rb->position;
+    }
+    if (const ecs::Position* p = e.try_get<ecs::Position>()) {
+        return glm::vec3{p->x, p->y, p->z};
+    }
+    return glm::vec3{0.f};
+}
+
+constexpr u32 kMaxTurrets = 16;
+
+/// Turrets whose assigned TurretGunner crew member is alive (one pass, no nesting).
+u32 collect_manned_turrets(flecs::world& world, flecs::entity_t* out, u32 capacity)
+{
+    u32 n = 0;
+    world.each([&](flecs::entity e, const CrewMember& crew) {
+        if (n >= capacity || crew.role != CrewRole::TurretGunner || crew.turret == 0) {
+            return;
+        }
+        if (e.has<character::CharacterDead>()) {
+            return;
+        }
+        out[n++] = crew.turret;
+    });
+    return n;
+}
+
+/// P2-03: turret slew + world pose sync + fire. Decision comes from the SHARED
+/// AI (ai::AiAgent state/target) or the player (ActiveTurretControl); this pass
+/// is actuation only.
+void step_turrets(
+    flecs::world&             world,
+    f32                       dt,
+    const HullTarget*         targets,
+    u32                       target_count,
+    combat::DamageEventQueue* dmg_q,
+    ProjectilePool*           pool,
+    const input::ActionState* actions,
+    f32                       look_sens)
+{
+    const ecs::ControlMode* mode = world.try_get<ecs::ControlMode>();
+    const bool              player_turret_mode =
+        mode != nullptr && mode->mode == ecs::ControlModeKind::TurretControl;
+
+    ActiveTurretControl active{};
+    if (const ActiveTurretControl* a = world.try_get<ActiveTurretControl>()) {
+        active = *a;
+    }
+
+    flecs::entity_t manned[kMaxTurrets]{};
+    const u32       manned_count = collect_manned_turrets(world, manned, kMaxTurrets);
+
+    world.each([&](flecs::entity e, TurretMount& t) {
+        if (t.ship == 0) {
+            return;
+        }
+        flecs::entity ship = world.entity(t.ship);
+        if (!ship.is_alive() || ship.has<Destroyed>()) {
+            return;
+        }
+        const RigidBody6DOF* rb = ship.try_get<RigidBody6DOF>();
+        if (rb == nullptr) {
+            return;
+        }
+
+        if (t.weapon.cooldown_remaining > 0.f) {
+            t.weapon.cooldown_remaining = std::max(0.f, t.weapon.cooldown_remaining - dt);
+        }
+        t.weapon.heat = std::max(0.f, t.weapon.heat - 15.f * dt);
+
+        const glm::quat rest_world = rb->orientation * t.local_rest;
+        const glm::vec3 mount_pos  = rb->position + rb->orientation * t.local_offset;
+
+        bool       fire_desired = false;
+        const bool player_drive = player_turret_mode && active.turret == e.id();
+
+        if (player_drive && actions != nullptr) {
+            t.yaw -= actions->axes[static_cast<u16>(input::ActionAxis::LookX)] * look_sens;
+            t.pitch -=
+                actions->axes[static_cast<u16>(input::ActionAxis::LookY)] * look_sens;
+            fire_desired =
+                actions->pressed[static_cast<u16>(input::Action::Fire)];
+        } else if (const ai::AiAgent* agent = e.try_get<ai::AiAgent>()) {
+            if (agent->state == ai::AiState::Combat && agent->target != 0) {
+                flecs::entity te = world.entity(agent->target);
+                if (te.is_alive()) {
+                    const glm::vec3 to_target = target_world_pos(te) - mount_pos;
+                    const f32       dist      = glm::length(to_target);
+                    if (dist > 0.5f) {
+                        const glm::vec3 dir_rest =
+                            glm::conjugate(rest_world) * (to_target / dist);
+                        const f32 desired_yaw = std::atan2(-dir_rest.x, -dir_rest.z);
+                        const f32 desired_pitch =
+                            std::asin(clampf(dir_rest.y, -1.f, 1.f));
+                        t.yaw = move_toward(t.yaw, desired_yaw, t.turn_rate * dt);
+                        t.pitch =
+                            move_toward(t.pitch, desired_pitch, t.turn_rate * dt);
+                        fire_desired = dist <= t.weapon.range;
+                    }
+                }
+            }
+        }
+
+        t.yaw   = clampf(t.yaw, -t.yaw_limit, t.yaw_limit);
+        t.pitch = clampf(t.pitch, -t.pitch_limit, t.pitch_limit);
+
+        const glm::quat aim_local =
+            glm::angleAxis(t.yaw, glm::vec3{0.f, 1.f, 0.f})
+            * glm::angleAxis(t.pitch, glm::vec3{1.f, 0.f, 0.f});
+        const glm::quat aim_world = rest_world * aim_local;
+        const glm::vec3 aim_dir   = aim_world * kShipForward;
+
+        // World pose sync (render/camera) — turret is rigid to the ship.
+        if (ecs::Position* p = e.try_get_mut<ecs::Position>()) {
+            if (ecs::PreviousPosition* prev = e.try_get_mut<ecs::PreviousPosition>()) {
+                prev->x = p->x;
+                prev->y = p->y;
+                prev->z = p->z;
+            }
+            p->x = mount_pos.x;
+            p->y = mount_pos.y;
+            p->z = mount_pos.z;
+        }
+        if (ecs::Orientation* o = e.try_get_mut<ecs::Orientation>()) {
+            o->q = aim_world;
+        }
+
+        if (!fire_desired) {
+            return;
+        }
+
+        // AI fire needs alignment inside the cone; the player aims freely.
+        if (!player_drive) {
+            const ai::AiAgent* agent = e.try_get<ai::AiAgent>();
+            if (agent == nullptr || agent->target == 0) {
+                return;
+            }
+            flecs::entity te = world.entity(agent->target);
+            if (!te.is_alive()) {
+                return;
+            }
+            const glm::vec3 to_target = target_world_pos(te) - mount_pos;
+            const f32       dist      = glm::length(to_target);
+            if (dist < 0.5f
+                || glm::dot(aim_dir, to_target / dist) < kTurretAimConeCos) {
+                return;
+            }
+            // Crewed turrets only fire with a living gunner (P2-01).
+            if (t.requires_gunner) {
+                bool has_gunner = false;
+                for (u32 i = 0; i < manned_count; ++i) {
+                    if (manned[i] == e.id()) {
+                        has_gunner = true;
+                        break;
+                    }
+                }
+                if (!has_gunner) {
+                    return;
+                }
+            }
+        }
+
+        // P2-02: host ship Weapons bank gates every turret on board.
+        if (const ShipSubsystems* subs = ship.try_get<ShipSubsystems>()) {
+            if (!subsystem_operational(*subs, combat::Subsystem::Weapons)) {
+                return;
+            }
+        }
+
+        PowerPlant* plant = ship.try_get_mut<PowerPlant>();
+        if (plant == nullptr || !weapon_try_consume(*plant, t.weapon)) {
+            return;
+        }
+        const glm::vec3 muzzle = mount_pos + aim_dir * kTurretMuzzleLen;
+        weapon_emit(
+            world, t.ship, muzzle, aim_dir, t.weapon, targets, target_count, dmg_q, pool);
+    });
+}
+
+/// P2-01: engineers repair the most damaged subsystem bank of their ship.
+/// Turret gunners are pure decision consumers — their actuation is in P2-03.
+void step_crew(flecs::world& world, f32 dt)
+{
+    world.each([&](flecs::entity e, const CrewMember& crew) {
+        if (crew.role != CrewRole::Engineer || crew.ship == 0) {
+            return;
+        }
+        if (e.has<character::CharacterDead>()) {
+            return;
+        }
+        flecs::entity ship = world.entity(crew.ship);
+        if (!ship.is_alive() || ship.has<Destroyed>()) {
+            return;
+        }
+        ShipSubsystems* subs = ship.try_get_mut<ShipSubsystems>();
+        if (subs == nullptr) {
+            return;
+        }
+
+        // Most damaged bank first (lowest health fraction, below 100%).
+        u32 worst      = combat::kSubsystemCount;
+        f32 worst_frac = 1.f;
+        for (u32 i = 0; i < combat::kSubsystemCount; ++i) {
+            const SubsystemHealth& h = subs->items[i];
+            if (h.max_hp <= 1e-3f) {
+                continue;
+            }
+            const f32 frac = h.hp / h.max_hp;
+            if (frac < worst_frac) {
+                worst_frac = frac;
+                worst      = i;
+            }
+        }
+        if (worst >= combat::kSubsystemCount) {
+            return;
+        }
+        SubsystemHealth& bank = subs->items[worst];
+        bank.hp = std::min(bank.max_hp, bank.hp + crew.repair_rate * dt);
+    });
 }
 
 void cleanup_destroyed(flecs::world& world)
@@ -548,6 +882,59 @@ void cleanup_destroyed(flecs::world& world)
 }
 
 }  // namespace
+
+f32 sample_atmosphere(flecs::world& world, const glm::vec3& pos, glm::vec3& out_gravity_accel)
+{
+    f32 best_density  = 0.f;
+    out_gravity_accel = glm::vec3{0.f};
+
+    world.each([&](const AtmosphereVolume& atmo) {
+        const glm::vec3 to_center = atmo.center - pos;
+        const f32       dist      = glm::length(to_center);
+        if (dist >= atmo.outer_radius || atmo.outer_radius <= atmo.inner_radius) {
+            return;
+        }
+        const f32 t = (dist <= atmo.inner_radius)
+            ? 1.f
+            : 1.f - (dist - atmo.inner_radius) / (atmo.outer_radius - atmo.inner_radius);
+        const f32 density = atmo.sea_level_density * t;
+        if (density > best_density) {
+            best_density = density;
+            out_gravity_accel = (dist > 1e-3f)
+                ? (to_center / dist) * (atmo.surface_gravity * t)
+                : glm::vec3{0.f};
+        }
+    });
+    return best_density;
+}
+
+f32 subsystem_efficiency(const ShipSubsystems& subs, combat::Subsystem s)
+{
+    if (s == combat::Subsystem::None) {
+        return 1.f;
+    }
+    const SubsystemHealth& h = subs.items[combat::subsystem_index(s)];
+    return (h.max_hp > 1e-3f) ? clampf(h.hp / h.max_hp, 0.f, 1.f) : 0.f;
+}
+
+bool subsystem_operational(const ShipSubsystems& subs, combat::Subsystem s)
+{
+    if (s == combat::Subsystem::None) {
+        return true;
+    }
+    return subs.items[combat::subsystem_index(s)].hp > 0.f;
+}
+
+combat::Subsystem roll_hit_subsystem(u32& rng_state)
+{
+    const u32 roll = combat::rng_next(rng_state) >> 8; // drop low-quality LCG bits
+    const f32 unit = static_cast<f32>(roll % 10000u) / 10000.f;
+    if (unit >= kSubsystemHitChance) {
+        return combat::Subsystem::None;
+    }
+    const u32 pick = (combat::rng_next(rng_state) >> 8) % combat::kSubsystemCount;
+    return static_cast<combat::Subsystem>(pick + 1u);
+}
 
 void map_actions_to_flight_control(
     const input::ActionState& in, FlightControl& ctrl, f32 look_torque_scale)
@@ -683,10 +1070,49 @@ void fixed_step(flecs::world& world, f32 dt)
 
         distribute_power(plant, dt);
 
+        // P2-02: subsystem damage degrades the pillar it belongs to.
+        const ShipSubsystems* subs = e.try_get<ShipSubsystems>();
+        const f32             eng_eff = (subs != nullptr)
+            ? subsystem_efficiency(*subs, combat::Subsystem::Engines)
+            : 1.f;
+        const f32 shd_eff = (subs != nullptr)
+            ? subsystem_efficiency(*subs, combat::Subsystem::Shields)
+            : 1.f;
+
         if (ShieldGenerator* shield = e.try_get_mut<ShieldGenerator>()) {
-            apply_shield_regen(*shield, plant.frac_shields, dt);
-            plant.stored = std::max(
-                0.f, plant.stored - shield->power_draw * plant.frac_shields * dt * 0.25f);
+            if (shd_eff <= 0.f) {
+                shield->current = 0.f; // generator destroyed — no absorption at all
+            } else {
+                apply_shield_regen(*shield, plant.frac_shields * shd_eff, dt);
+                plant.stored = std::max(
+                    0.f,
+                    plant.stored - shield->power_draw * plant.frac_shields * dt * 0.25f);
+            }
+        }
+
+        // P2-04: atmósfera (arrastre + sustentación + gravedad) vs vacío.
+        glm::vec3 atmo_gravity{};
+        const f32 atmo_density = sample_atmosphere(world, rb.position, atmo_gravity);
+        glm::vec3 aero_force_world{0.f};
+        if (atmo_density > 0.f) {
+            AeroProfile aero{};
+            if (const AeroProfile* ap = e.try_get<AeroProfile>()) {
+                aero = *ap;
+            }
+            const glm::vec3 v     = rb.linear_vel;
+            const f32       speed = glm::length(v);
+            if (speed > 0.5f) {
+                // Quadratic drag against velocity.
+                aero_force_world += v * (-0.5f * atmo_density * speed * aero.drag_area);
+                // Simplified lift: forward airspeed² along body-up.
+                const glm::vec3 fwd = body_to_world(rb.orientation, kShipForward);
+                const glm::vec3 up  = body_to_world(rb.orientation, glm::vec3{0.f, 1.f, 0.f});
+                const f32       vf  = glm::dot(v, fwd);
+                if (vf > 0.f) {
+                    aero_force_world += up * (0.5f * atmo_density * vf * vf * aero.lift_area);
+                }
+            }
+            aero_force_world += atmo_gravity * rb.mass;
         }
 
         // Unpiloted player ship coasts (no thruster wrench) so LocalToShip interiors move.
@@ -695,7 +1121,7 @@ void fixed_step(flecs::world& world, f32 dt)
                 thrusters.activation[i] = 0.f;
             }
             sync_rigid_to_ecs(e, rb, true);
-            integrate_rigid_body(rb, glm::vec3{0.f}, glm::vec3{0.f}, dt);
+            integrate_rigid_body(rb, aero_force_world, glm::vec3{0.f}, dt);
             sync_rigid_to_ecs(e, rb, false);
             return;
         }
@@ -705,15 +1131,50 @@ void fixed_step(flecs::world& world, f32 dt)
 
         glm::vec3 force_body{};
         glm::vec3 torque_body{};
-        accumulate_thruster_wrench(thrusters, plant.frac_thrusters, force_body, torque_body);
-        torque_body += ctrl.torque_input * kMaxTorqueNm * plant.frac_thrusters;
+        accumulate_thruster_wrench(
+            thrusters, plant.frac_thrusters * eng_eff, force_body, torque_body);
+        torque_body += ctrl.torque_input * kMaxTorqueNm * plant.frac_thrusters * eng_eff;
 
-        const glm::vec3 force_world  = body_to_world(rb.orientation, force_body);
+        const glm::vec3 force_world =
+            body_to_world(rb.orientation, force_body) + aero_force_world;
         const glm::vec3 torque_world = body_to_world(rb.orientation, torque_body);
 
         sync_rigid_to_ecs(e, rb, true);
         integrate_rigid_body(rb, force_world, torque_world, dt);
         sync_rigid_to_ecs(e, rb, false);
+    });
+
+    // P2-04: HUD sample for the player ship (density this tick).
+    {
+        AtmosphereSample sample{};
+        world.each([&](flecs::entity e, const RigidBody6DOF& rb) {
+            if (sample.in_atmosphere || !e.has<PlayerShip>()) {
+                return;
+            }
+            glm::vec3 g{};
+            sample.density       = sample_atmosphere(world, rb.position, g);
+            sample.in_atmosphere = sample.density > 0.f;
+        });
+        world.set<AtmosphereSample>(sample);
+    }
+
+    // NPC ships (no FlightControl): power + shields still tick (P2-03/P2-12).
+    world.each([&](flecs::entity e, RigidBody6DOF&, PowerPlant& plant) {
+        if (e.has<FlightControl>() || e.has<Destroyed>()) {
+            return;
+        }
+        distribute_power(plant, dt);
+        const ShipSubsystems* subs = e.try_get<ShipSubsystems>();
+        const f32             shd_eff = (subs != nullptr)
+            ? subsystem_efficiency(*subs, combat::Subsystem::Shields)
+            : 1.f;
+        if (ShieldGenerator* shield = e.try_get_mut<ShieldGenerator>()) {
+            if (shd_eff <= 0.f) {
+                shield->current = 0.f;
+            } else {
+                apply_shield_regen(*shield, plant.frac_shields * shd_eff, dt);
+            }
+        }
     });
 
     HullTarget targets[kMaxHullTargets]{};
@@ -738,14 +1199,32 @@ void fixed_step(flecs::world& world, f32 dt)
         if (!fire_held || e.has<Destroyed>() || !e.has<PlayerShip>()) {
             return;
         }
+        // P2-02: destroyed weapons bank keeps all mounts offline.
+        if (const ShipSubsystems* subs = e.try_get<ShipSubsystems>()) {
+            if (!subsystem_operational(*subs, combat::Subsystem::Weapons)) {
+                return;
+            }
+        }
         for (u32 i = 0; i < weapons.count; ++i) {
             try_fire_mount(
                 world, e, rb, plant, weapons.mounts[i], targets, target_count, dmg_q, pool);
         }
     });
 
+    // P2-03: turrets slew/fire after ship poses settle, before projectiles step.
+    step_turrets(
+        world,
+        dt,
+        targets,
+        target_count,
+        dmg_q,
+        pool,
+        (actions != nullptr) ? &actions->state : nullptr,
+        look_scale * 0.25f);
+
     step_projectiles(world, dt, targets, target_count);
     apply_damage_events(world);
+    step_crew(world, dt); // P2-01: engineer repairs after this tick's damage
     cleanup_destroyed(world);
 }
 
@@ -753,6 +1232,12 @@ void register_systems(flecs::world& world)
 {
     if (world.try_get<combat::DamageEventQueue>() == nullptr) {
         world.set<combat::DamageEventQueue>(combat::DamageEventQueue{});
+    }
+    if (world.try_get<combat::CombatRng>() == nullptr) {
+        world.set<combat::CombatRng>(combat::CombatRng{});
+    }
+    if (world.try_get<ActiveTurretControl>() == nullptr) {
+        world.set<ActiveTurretControl>(ActiveTurretControl{});
     }
     if (world.try_get<ecs::ControlMode>() == nullptr) {
         world.set<ecs::ControlMode>(ecs::ControlMode{});
@@ -805,6 +1290,13 @@ flecs::entity spawn_player_ship(flecs::world& world, const glm::vec3& position)
     FlightControl ctrl{};
     ctrl.coupled = true;
 
+    // P2-02: independently damageable banks (ENG / SHD / WPN / SEN).
+    ShipSubsystems subsystems{};
+    subsystems.items[combat::subsystem_index(combat::Subsystem::Engines)] = {300.f, 300.f};
+    subsystems.items[combat::subsystem_index(combat::Subsystem::Shields)] = {250.f, 250.f};
+    subsystems.items[combat::subsystem_index(combat::Subsystem::Weapons)] = {200.f, 200.f};
+    subsystems.items[combat::subsystem_index(combat::Subsystem::Sensors)] = {150.f, 150.f};
+
     const ecs::Position pos{position.x, position.y, position.z};
 
     flecs::entity ship =
@@ -814,6 +1306,8 @@ flecs::entity spawn_player_ship(flecs::world& world, const glm::vec3& position)
             .set<PowerPlant>(plant)
             .set<ShieldGenerator>(shield)
             .set<ShipHull>(hull)
+            .set<ShipSubsystems>(subsystems)
+            .set<AeroProfile>(AeroProfile{})
             .set<WeaponMountSet>(weapons)
             .set<FlightControl>(ctrl)
             .set<ecs::Position>(pos)
@@ -849,8 +1343,16 @@ flecs::entity spawn_damage_target(flecs::world& world, const glm::vec3& position
 
     const ecs::Position pos{position.x, position.y, position.z};
 
+    // P2-02: targets expose subsystem banks so hits can disable them one by one.
+    ShipSubsystems subsystems{};
+    subsystems.items[combat::subsystem_index(combat::Subsystem::Engines)] = {120.f, 120.f};
+    subsystems.items[combat::subsystem_index(combat::Subsystem::Shields)] = {100.f, 100.f};
+    subsystems.items[combat::subsystem_index(combat::Subsystem::Weapons)] = {80.f, 80.f};
+    subsystems.items[combat::subsystem_index(combat::Subsystem::Sensors)] = {60.f, 60.f};
+
     flecs::entity target = world.entity("DamageTarget")
                                .set<ShipHull>(hull)
+                               .set<ShipSubsystems>(subsystems)
                                .set<ecs::Position>(pos)
                                .set<ecs::PreviousPosition>({pos.x, pos.y, pos.z})
                                .set<ecs::Velocity>({0.f, 0.f, 0.f})
@@ -866,6 +1368,162 @@ flecs::entity spawn_damage_target(flecs::world& world, const glm::vec3& position
         static_cast<double>(hull.hp));
 
     return target;
+}
+
+flecs::entity spawn_crew_member(
+    flecs::world&    world,
+    flecs::entity_t  ship,
+    CrewRole         role,
+    const glm::vec3& local_seat,
+    const char*      name)
+{
+    CrewMember crew{};
+    crew.role = role;
+    crew.ship = ship;
+
+    character::LocalToShip seat{};
+    seat.ship_entity    = ship;
+    seat.local_position = local_seat;
+
+    character::Health hp{};
+    hp.max_hp = 100.f;
+    hp.hp     = 100.f;
+
+    // World pose is derived by sync_local_to_ship_world (LocalToShip contract).
+    const ecs::Position pos{0.f, 0.f, 0.f};
+
+    flecs::entity crew_e = world.entity(name)
+                               .set<CrewMember>(crew)
+                               .set<character::LocalToShip>(seat)
+                               .set<character::Health>(hp)
+                               .set<ecs::Position>(pos)
+                               .set<ecs::PreviousPosition>({pos.x, pos.y, pos.z})
+                               .set<ecs::Velocity>({0.f, 0.f, 0.f})
+                               .set<ecs::Orientation>({})
+                               .set<ecs::Scale>({0.7f})
+                               .add<ecs::InstanceTag>()
+                               .add<ecs::KinematicFromRigidBody>();
+
+    log::log_info(
+        log::LogCategory::Game,
+        "Spawned crew '%s' role=%s seat=(%.1f, %.1f, %.1f)",
+        name,
+        (role == CrewRole::Engineer) ? "engineer" : "turret-gunner",
+        static_cast<double>(local_seat.x),
+        static_cast<double>(local_seat.y),
+        static_cast<double>(local_seat.z));
+
+    return crew_e;
+}
+
+flecs::entity spawn_turret(
+    flecs::world&    world,
+    flecs::entity_t  ship,
+    const glm::vec3& local_offset,
+    u32              faction_id,
+    bool             requires_gunner,
+    const char*      name)
+{
+    TurretMount mount{};
+    mount.ship            = ship;
+    mount.local_offset    = local_offset;
+    mount.requires_gunner = requires_gunner;
+    mount.weapon.cooldown = 0.5f;
+    mount.weapon.energy_cost = 10.f;
+    mount.weapon.damage      = 35.f;
+    mount.weapon.range       = 350.f;
+    mount.weapon.hitscan     = false;
+
+    ai::AiAgent agent{};
+    agent.detection_range      = 400.f;
+    agent.attack_range         = mount.weapon.range;
+    agent.flee_health_fraction = 0.f; // turrets never flee
+
+    const ecs::Position pos{0.f, 0.f, 0.f}; // synced from ship each fixed step
+
+    flecs::entity turret = world.entity(name)
+                               .set<TurretMount>(mount)
+                               .set<ai::AiAgent>(agent)
+                               .set<ai::FactionMember>({faction_id})
+                               .set<ai::SensorLink>({ship})
+                               .set<ecs::Position>(pos)
+                               .set<ecs::PreviousPosition>({pos.x, pos.y, pos.z})
+                               .set<ecs::Velocity>({0.f, 0.f, 0.f})
+                               .set<ecs::Orientation>({})
+                               .set<ecs::Scale>({0.9f})
+                               .add<ecs::InstanceTag>()
+                               .add<ecs::KinematicFromRigidBody>();
+
+    log::log_info(
+        log::LogCategory::Game,
+        "Spawned turret '%s' on ship=%llu faction=%u requires_gunner=%d",
+        name,
+        static_cast<unsigned long long>(ship),
+        faction_id,
+        requires_gunner ? 1 : 0);
+
+    return turret;
+}
+
+flecs::entity spawn_npc_ship(
+    flecs::world&    world,
+    const glm::vec3& position,
+    u32              faction_id,
+    const char*      name)
+{
+    RigidBody6DOF rb{};
+    rb.position     = position;
+    rb.mass         = kShipMassKg;
+    rb.inertia_diag = glm::vec3{180000.f, 220000.f, 90000.f};
+
+    PowerPlant plant{};
+    plant.output_rate = 350.f;
+    plant.capacity    = 900.f;
+    plant.stored      = 900.f;
+
+    ShieldGenerator shield{};
+    shield.max_capacity = 350.f;
+    shield.current      = 350.f;
+    shield.regen_rate   = 25.f;
+
+    ShipHull hull{};
+    hull.max_hp = 600.f;
+    hull.hp     = 600.f;
+    hull.radius = 3.5f;
+
+    ShipSubsystems subsystems{};
+    subsystems.items[combat::subsystem_index(combat::Subsystem::Engines)] = {200.f, 200.f};
+    subsystems.items[combat::subsystem_index(combat::Subsystem::Shields)] = {160.f, 160.f};
+    subsystems.items[combat::subsystem_index(combat::Subsystem::Weapons)] = {140.f, 140.f};
+    subsystems.items[combat::subsystem_index(combat::Subsystem::Sensors)] = {100.f, 100.f};
+
+    const ecs::Position pos{position.x, position.y, position.z};
+
+    flecs::entity ship = world.entity(name)
+                             .set<RigidBody6DOF>(rb)
+                             .set<PowerPlant>(plant)
+                             .set<ShieldGenerator>(shield)
+                             .set<ShipHull>(hull)
+                             .set<ShipSubsystems>(subsystems)
+                             .set<ai::FactionMember>({faction_id})
+                             .set<ecs::Position>(pos)
+                             .set<ecs::PreviousPosition>({pos.x, pos.y, pos.z})
+                             .set<ecs::Velocity>({0.f, 0.f, 0.f})
+                             .set<ecs::Orientation>({rb.orientation})
+                             .set<ecs::Scale>({2.2f})
+                             .add<ecs::InstanceTag>()
+                             .add<ecs::KinematicFromRigidBody>();
+
+    log::log_info(
+        log::LogCategory::Game,
+        "Spawned NPC ship '%s' faction=%u at (%.0f, %.0f, %.0f)",
+        name,
+        faction_id,
+        static_cast<double>(position.x),
+        static_cast<double>(position.y),
+        static_cast<double>(position.z));
+
+    return ship;
 }
 
 void spawn_projectile_pool(flecs::world& world)
@@ -893,6 +1551,21 @@ void spawn_projectile_pool(flecs::world& world)
     if (world.try_get<combat::DamageEventQueue>() == nullptr) {
         world.set<combat::DamageEventQueue>(combat::DamageEventQueue{});
     }
+}
+
+void fill_player_subsystem_telemetry(flecs::world& world, SubsystemTelemetry& out)
+{
+    out = SubsystemTelemetry{};
+    world.each([&](flecs::entity e, const ShipSubsystems& subs) {
+        if (out.found || !e.has<PlayerShip>()) {
+            return;
+        }
+        out.found = true;
+        for (u32 i = 0; i < combat::kSubsystemCount; ++i) {
+            out.efficiency[i] =
+                subsystem_efficiency(subs, static_cast<combat::Subsystem>(i + 1u));
+        }
+    });
 }
 
 void fill_player_telemetry(

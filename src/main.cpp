@@ -12,6 +12,7 @@
 #include "engine/vulkan/instance.hpp"
 #include "engine/vulkan/renderer.hpp"
 
+#include "game/ai/ai.hpp"
 #include "game/audio/audio.hpp"
 #include "game/character/character.hpp"
 #include "game/economy/economy.hpp"
@@ -41,6 +42,7 @@ void register_game_systems(flecs::world& world)
 {
     csc::game::flight::register_systems(world);
     csc::game::character::register_systems(world);
+    csc::game::ai::register_systems(world);
     csc::game::economy::register_systems(world);
     csc::game::world::register_systems(world);
     csc::game::ui::register_systems(world);
@@ -436,6 +438,15 @@ int main(int argc, char** argv)
         bool world_found = false;
         game::world::fill_world_telemetry(world, ui_stats.rebase_count, world_found);
         (void)world_found;
+
+        game::ai::AiTelemetry ai_stats{};
+        game::ai::fill_ai_telemetry(world, ai_stats);
+        ui_stats.has_ai_telemetry =
+            (ai_stats.patrol + ai_stats.alert + ai_stats.combat + ai_stats.flee) > 0;
+        ui_stats.ai_patrol = ai_stats.patrol;
+        ui_stats.ai_alert  = ai_stats.alert;
+        ui_stats.ai_combat = ai_stats.combat;
+        ui_stats.ai_flee   = ai_stats.flee;
 
         debug::DebugUiState* ui_ptr = debug_ui.ready ? &debug_ui : nullptr;
         if (ui_ptr != nullptr) {

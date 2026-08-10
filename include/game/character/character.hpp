@@ -61,6 +61,92 @@ struct EquippedItem {
     f32 cooldown_remaining = 0.f;
 };
 
+// --- P2-05: full inventory -----------------------------------------------------
+
+inline constexpr u32 kMaxInventorySlots = 8;
+inline constexpr u32 kItemNameBytes     = 24;
+
+enum class ItemKind : u8 {
+    None       = 0,
+    Weapon     = 1,
+    Consumable = 2,
+};
+
+/// Static item catalog entry (fixed table, no runtime registration).
+struct ItemDef {
+    u32      id   = 0;
+    char     name[kItemNameBytes]{};
+    ItemKind kind = ItemKind::None;
+    // Weapon stats (kind == Weapon)
+    f32 damage        = 0.f;
+    f32 fire_cooldown = 0.f;
+    u32 ammo_max      = 0;
+    // Consumable effect (kind == Consumable)
+    f32 heal_amount = 0.f;
+    u32 ammo_refill = 0;
+};
+
+/// Catalog ids: 1=Rifle, 2=Pistol, 3=Medkit, 4=AmmoPack.
+inline constexpr u32 kItemRifle    = 1;
+inline constexpr u32 kItemPistol   = 2;
+inline constexpr u32 kItemMedkit   = 3;
+inline constexpr u32 kItemAmmoPack = 4;
+
+/// nullptr when the id is not in the catalog.
+[[nodiscard]] const ItemDef* item_find(u32 item_id);
+
+struct InventorySlot {
+    u32 item_id = 0;
+    u32 qty     = 0;
+};
+
+/// Fixed-slot personal inventory (P2-05). Weapon ammo resets on equip (simple).
+struct Inventory {
+    InventorySlot slots[kMaxInventorySlots]{};
+};
+
+/// World item the player can pick up via Interact.
+struct ItemPickup {
+    u32 item_id = 0;
+    u32 qty     = 1;
+};
+
+// Pure helpers (no ECS access).
+[[nodiscard]] bool inventory_add(Inventory& inv, u32 item_id, u32 qty);
+[[nodiscard]] bool inventory_remove(Inventory& inv, u32 item_id, u32 qty);
+[[nodiscard]] u32  inventory_count(const Inventory& inv, u32 item_id);
+
+// --- P2-06: on-foot combat AI (actuation over the SHARED ai::AiAgent) ----------
+
+inline constexpr u32 kMaxPatrolPoints = 4;
+inline constexpr u32 kMaxCoverPoints  = 16;
+
+/// Actuation tunables + per-tick wish for a hostile NPC. The DECISION
+/// (state/target) lives in ai::AiAgent (P2-11); this component only drives
+/// locomotion + trigger pulls. `move_wish` is written by the NPC actuation
+/// pass and consumed by the shared locomotion step (same path as the player).
+struct NpcCombatant {
+    f32 move_speed      = 3.2f;
+    f32 preferred_range = 14.f; ///< advance until this close in Combat
+    f32 fire_range      = 45.f;
+    f32 accuracy        = 0.65f; ///< hit probability per shot (CombatRng roll)
+    f32 cover_health_fraction = 0.6f; ///< below this, fight from cover
+    glm::vec3 move_wish{0.f};        ///< runtime: unit ground-plane wish dir
+};
+
+/// Fixed waypoint loop walked while the shared FSM is in Patrol.
+struct PatrolRoute {
+    glm::vec3 points[kMaxPatrolPoints]{};
+    u32       count   = 0;
+    u32       current = 0;
+};
+
+/// Cover spot NPCs run to when hurt (P2-06). Non-empty on purpose: flecs
+/// registers empty structs as tags, which cannot be fetched by value in each().
+struct CoverPoint {
+    f32 arrive_radius = 0.8f;
+};
+
 enum class GravityZoneShape : u8 {
     Box    = 0,
     Sphere = 1,
@@ -111,6 +197,12 @@ struct ShipHatch {
 /// Pilot seat: Interact toggles ControlMode ShipPilot ↔ OnFoot.
 struct PilotSeat {
     flecs::entity_t ship = 0;
+};
+
+/// P2-03: turret seat — Interact enters TurretControl for `turret`
+/// (Interact again while manning exits back to OnFoot).
+struct TurretSeat {
+    flecs::entity_t turret = 0;
 };
 
 struct PlayerCharacter {};
@@ -188,8 +280,46 @@ void fixed_step(flecs::world& world, f32 dt);
     const glm::vec3& local_pos,
     const char*      prompt = "Pilot seat");
 
+/// P2-03: interactable seat that puts the player in control of `turret`.
+[[nodiscard]] flecs::entity spawn_turret_seat(
+    flecs::world&    world,
+    flecs::entity_t  ship,
+    flecs::entity_t  turret,
+    const glm::vec3& local_pos,
+    const char*      prompt = "Turret seat");
+
 [[nodiscard]] flecs::entity spawn_station_interactable(
     flecs::world& world, const glm::vec3& position, const char* prompt = "Station terminal");
+
+/// P2-05: spawn a pickable item (Interact adds it to the player Inventory).
+[[nodiscard]] flecs::entity spawn_item_pickup(
+    flecs::world&    world,
+    const glm::vec3& position,
+    u32              item_id,
+    u32              qty);
+
+/// P2-06: hostile on-foot NPC. Decision comes from the SHARED ai::AiAgent
+/// (P2-11); this entity only actuates locomotion + trigger pulls.
+[[nodiscard]] flecs::entity spawn_npc_combatant(
+    flecs::world&      world,
+    const glm::vec3&   position,
+    u32                faction_id,
+    const PatrolRoute& route,
+    const char*        name = "HostileNpc");
+
+/// P2-06: cover spot hurt NPCs run to while fighting.
+[[nodiscard]] flecs::entity spawn_cover_point(
+    flecs::world& world, const glm::vec3& position);
+
+/// P2-05: HUD snapshot of the player's inventory (fixed buffers, no heap).
+struct InventoryTelemetry {
+    bool found = false;
+    char weapon_name[kItemNameBytes]{};
+    u32  medkits    = 0;
+    u32  ammo_packs = 0;
+};
+
+void fill_inventory_telemetry(flecs::world& world, InventoryTelemetry& out);
 
 /// Fill debug overlay fields from the first PlayerCharacter (if any).
 void fill_player_telemetry(

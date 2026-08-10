@@ -1,6 +1,52 @@
 # STATUS
 
-## Fase activa: Fase 1 — Vertical Slice — **COMPLETADA** (PARADA: validación física)
+## Fase activa: Fase 2 — Profundidad de Sistemas (rama `release/fase-2-profundidad-de-sistemas`)
+
+Fase 1 validada físicamente por el usuario (2026-08-10) — apertura de Fase 2.
+
+## Progreso Fase 2
+- Naves y vuelo (P2-01..04):   [####] 4/4 — COMPLETADO
+  - [x] P2-01 Tripulación NPC (artillero / ingeniero) con asiento fijo LocalToShip
+  - [x] P2-02 Daño por componente (ENG/SHD/WPN/SEN) vía DamageEvent.subsystem
+  - [x] P2-03 Torretas giratorias (IA o jugador) con arco de disparo
+  - [x] P2-04 Modelo de vuelo atmosférico vs vacío (arrastre + sustentación)
+- A pie (P2-05..07):           [##] 2/3
+  - [x] P2-05 Inventario completo (slots equipo, recogibles, uso de items)
+  - [x] P2-06 IA combate a pie (detección, cobertura, disparo) sobre P2-11
+  - [ ] P2-07 Daño por zona (torso/extremidad) + muerte/reaparición jugador
+- Economía y misiones (P2-08..10): [.] 0/3
+  - [ ] P2-08 Simulación económica dinámica (producción/consumo, eventos de precio)
+  - [ ] P2-09 Misiones encadenadas con ramificación simple
+  - [ ] P2-10 Misiones combate/escolta reutilizando IA P2-03/P2-06
+- IA y facciones (P2-11..12):  [#] 1/2
+  - [x] P2-11 Framework de IA compartido (FSM patrulla/alerta/combate/huida + hostilidad por reputación)
+  - [ ] P2-12 Encuentros aleatorios por proximidad desde Pool
+- Mundo (P2-13):               [.] 0/1
+  - [ ] P2-13 Más localizaciones en el sistema fijo (esquema P1D-02)
+
+## Decisiones Fase 2 (documentadas)
+1. **P2-02 subsistemas:** 4 bancos fijos por nave (`ShipSubsystems`): Engines 300 HP,
+   Shields 250, Weapons 200, Sensors 150 (jugador). `DamageEvent` gana campo
+   `subsystem` (enum `combat::Subsystem`, `None` = casco puro — cero tipos de evento
+   nuevos). Tras absorción de escudo: 60% de los impactos de arma eligen subsistema
+   (LCG `CombatRng` singleton, determinista); el subsistema recibe 65% y el casco 35%
+   (bleed-through). Efectos: ENG escala empuje/torque linealmente con HP; SHD a 0 →
+   escudo forzado a 0 sin regen; WPN a 0 → todos los montajes offline; SEN reservado
+   para detección IA (P2-11) y HUD. HUD vuelo muestra ENG/SGN/WPN/SEN u OFFLINE.
+   El formato de guardado v1 NO serializa subsistemas todavía (decisión: bump de
+   schema al cerrar más componentes de Fase 2, una sola migración).
+2. **P2-11 IA compartida:** `src/game/ai/` es la ÚNICA máquina de decisión
+   (`AiAgent` FSM Patrol/Alert/Combat/Flee + `select_target` + hostilidad).
+   Decisión y actuación separadas: torretas/NPCs/naves solo LEEN `AiAgent.state`
+   y `AiAgent.target` en sus sistemas. Facciones: 0=Comercio, 1=Seguridad,
+   2=Colonos, 3=Piratas (`kPirateFaction`, hostil a todos siempre). Hostilidad
+   hacia el jugador = `rep[f] < -10` (`kHostileRepThreshold`) — una sola función
+   `faction_hostile_to_player` para los tres contextos (DoD). Percepción por
+   distancia (sin line-of-sight esta fase) escalada por sensores P2-02 propios o
+   del host (`SensorLink`, floor 30%). `ai::fixed_step` corre ANTES de
+   character/flight en `game::fixed_step`. Buffer fijo 32 candidatos, cero heap.
+
+## Fase 1 — Vertical Slice — **COMPLETADA y validada** (histórico)
 
 ## Cierre Fase 1 — resumen del bucle jugable
 
@@ -143,6 +189,34 @@ Cuando una entidad lleva `LocalToShip { ship_entity, local_position, local_orien
 5. Al salir (quitar `LocalToShip`), se bakea la pose mundial y la sim pasa a espacio mundo / GravityZone.
 
 ## Bitácora (más reciente arriba, una línea por tarea)
+- 2026-08-10 [P2-06] IA combate a pie: NpcCombatant (actuación) sobre AiAgent P2-11 (decisión).
+  Patrol=PatrolRoute waypoints, Alert=encara, Combat=avanza hasta preferred_range + dispara
+  (cadencia EquippedItem, roll de precisión CombatRng, mismo DamageEvent que el jugador),
+  herido <60% → CoverPoint más cercano, Flee correr. move_wish entra por la MISMA locomoción
+  que el jugador. Overlay AI por estado. Escena `npc_combat_test` verificada (captura).
+- 2026-08-10 [P2-05] Inventario: catálogo fijo (Rifle/Pistola/Medkit/Munición), Inventory
+  8 slots POD, ItemPickup vía Interact (retira tags, sin delete en tick), teclas G/T/R
+  (medkit/cambiar arma/recargar; equipar resetea cargador — simplificación documentada),
+  HUD WPN+consumibles, pickups en on_foot_test. Siguiente: P2-06 usa mismos NPC Health.
+- 2026-08-10 [P2-04] Atmósfera vs vacío: AtmosphereVolume esférico (densidad lineal
+  inner→outer), arrastre cuadrático + sustentación simplificada (AeroProfile Cd·A=25 /
+  Cl·A=8) + gravedad planetaria para naves dentro del volumen. Rebase P1D-07 desplaza
+  centros. HUD línea ATM (kg/m³ o VACUUM). Verificado en universe_test (captura).
+- 2026-08-10 [P2-03] Torretas: TurretMount (arco ±120° yaw / ±60° pitch, slew 2.4 rad/s),
+  actuación IA desde AiAgent compartido o jugador (TurretSeat → ControlMode::TurretControl,
+  Interact sale). Disparo compartido weapon_try_consume/weapon_emit (cero duplicación P1A).
+  Gate: banco Weapons P2-02 + gunner vivo (requires_gunner). Escena `crew_turret_test`
+  verificada en lavapipe: pirata daña subsistemas del jugador (captura en artifacts/).
+- 2026-08-10 [P2-01] Tripulación NPC: CrewMember (gunner/engineer) sentado vía LocalToShip
+  (mismo patrón que jugador a pie, sin física propia). Ingeniero repara el banco más dañado
+  a 6 HP/s tras el daño del tick. Gunner enlaza turret (actuación en P2-03). Crew no
+  persiste en save v1 (misma decisión que subsistemas). Siguiente: P2-03 torretas.
+- 2026-08-10 [P2-11] Framework IA compartido (src/game/ai/): FSM + select_target + reputación,
+  SensorLink para torretas, telemetría por estado. Siguiente: P2-01/P2-03 consumen AiAgent.
+- 2026-08-10 [P2-02] Daño por componente: ShipSubsystems (4 bancos POD), DamageEvent.subsystem,
+  roll de localización LCG, degradación ENG/SHD/WPN en fixed_step, HUD por subsistema.
+  Siguiente (P2-11) necesita SEN para radio de detección IA.
+- 2026-08-10 Fase 1 validada por usuario. Apertura Fase 2 — rama `release/fase-2-profundidad-de-sistemas`.
 - 2026-08-10 [P1F-01..06] Binary save schema v1 + PersistentId; slots/quicksave; save_load_test; CSC_SAVE_SMOKE; Fase 1 COMPLETADA — PARADA validación física.
 - 2026-08-10 [P1E-01..07] UI=ImGui (Fase 6 rework); HUD flight/on-foot; pause+menus; miniaudio voice pool 16 + SFX/Music/UI buses; `--scene=ui_audio_test`.
 - 2026-08-10 [P1C-01..07,09] Economy: cfg Commodity/Market/MissionTemplate; CargoHold+Wallet; buy/sell supply curve; MissionActive Pool; FactionReputation; NPC Interact; `--scene=economy_test`. Load-time parsers only (no heap in loop).

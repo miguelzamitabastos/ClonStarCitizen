@@ -82,6 +82,7 @@ enum class ControlModeKind : u8 {
     FreeLook = 0,
     ShipPilot,
     OnFoot,
+    TurretControl, ///< P2-03: player manning a ship turret (seat change)
 };
 
 struct ControlMode {

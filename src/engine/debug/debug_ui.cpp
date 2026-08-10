@@ -276,6 +276,16 @@ void debug_ui_build(DebugUiState& state, const DebugUiStats& stats)
             ImGui::Text("Cargo: %s", stats.cargo_summary);
             ImGui::Text("Missions: %u (%s)", stats.active_missions, stats.mission_summary);
         }
+        if (stats.has_ai_telemetry) {
+            ImGui::Separator();
+            ImGui::Text("— AI (P2-11) —");
+            ImGui::Text(
+                "Patrol: %u  Alert: %u  Combat: %u  Flee: %u",
+                stats.ai_patrol,
+                stats.ai_alert,
+                stats.ai_combat,
+                stats.ai_flee);
+        }
         ImGui::Separator();
         ImGui::Text("— World (P1D) —");
         ImGui::Text("Floating-origin rebases: %u", stats.rebase_count);
