@@ -49,7 +49,7 @@ void add_thruster(ThrusterSet& set, const glm::vec3& pos, const glm::vec3& dir, 
 
 void build_default_thruster_set(ThrusterSet& set)
 {
-    set = {};
+    set = ThrusterSet{};
     add_thruster(set, {0.f, 0.f, 2.5f}, {0.f, 0.f, -1.f}, kMainThrusterForceN);
     add_thruster(set, {0.f, 0.f, -2.5f}, {0.f, 0.f, 1.f}, kRetroThrusterForceN);
     add_thruster(set, {2.f, 0.f, 0.f}, {-1.f, 0.f, 0.f}, kManeuverThrusterForceN);
