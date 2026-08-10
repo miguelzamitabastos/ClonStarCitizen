@@ -883,6 +883,31 @@ void cleanup_destroyed(flecs::world& world)
 
 }  // namespace
 
+f32 sample_atmosphere(flecs::world& world, const glm::vec3& pos, glm::vec3& out_gravity_accel)
+{
+    f32 best_density  = 0.f;
+    out_gravity_accel = glm::vec3{0.f};
+
+    world.each([&](const AtmosphereVolume& atmo) {
+        const glm::vec3 to_center = atmo.center - pos;
+        const f32       dist      = glm::length(to_center);
+        if (dist >= atmo.outer_radius || atmo.outer_radius <= atmo.inner_radius) {
+            return;
+        }
+        const f32 t = (dist <= atmo.inner_radius)
+            ? 1.f
+            : 1.f - (dist - atmo.inner_radius) / (atmo.outer_radius - atmo.inner_radius);
+        const f32 density = atmo.sea_level_density * t;
+        if (density > best_density) {
+            best_density = density;
+            out_gravity_accel = (dist > 1e-3f)
+                ? (to_center / dist) * (atmo.surface_gravity * t)
+                : glm::vec3{0.f};
+        }
+    });
+    return best_density;
+}
+
 f32 subsystem_efficiency(const ShipSubsystems& subs, combat::Subsystem s)
 {
     if (s == combat::Subsystem::None) {
@@ -1065,13 +1090,38 @@ void fixed_step(flecs::world& world, f32 dt)
             }
         }
 
+        // P2-04: atmósfera (arrastre + sustentación + gravedad) vs vacío.
+        glm::vec3 atmo_gravity{};
+        const f32 atmo_density = sample_atmosphere(world, rb.position, atmo_gravity);
+        glm::vec3 aero_force_world{0.f};
+        if (atmo_density > 0.f) {
+            AeroProfile aero{};
+            if (const AeroProfile* ap = e.try_get<AeroProfile>()) {
+                aero = *ap;
+            }
+            const glm::vec3 v     = rb.linear_vel;
+            const f32       speed = glm::length(v);
+            if (speed > 0.5f) {
+                // Quadratic drag against velocity.
+                aero_force_world += v * (-0.5f * atmo_density * speed * aero.drag_area);
+                // Simplified lift: forward airspeed² along body-up.
+                const glm::vec3 fwd = body_to_world(rb.orientation, kShipForward);
+                const glm::vec3 up  = body_to_world(rb.orientation, glm::vec3{0.f, 1.f, 0.f});
+                const f32       vf  = glm::dot(v, fwd);
+                if (vf > 0.f) {
+                    aero_force_world += up * (0.5f * atmo_density * vf * vf * aero.lift_area);
+                }
+            }
+            aero_force_world += atmo_gravity * rb.mass;
+        }
+
         // Unpiloted player ship coasts (no thruster wrench) so LocalToShip interiors move.
         if (e.has<PlayerShip>() && !ship_pilot) {
             for (u32 i = 0; i < thrusters.count; ++i) {
                 thrusters.activation[i] = 0.f;
             }
             sync_rigid_to_ecs(e, rb, true);
-            integrate_rigid_body(rb, glm::vec3{0.f}, glm::vec3{0.f}, dt);
+            integrate_rigid_body(rb, aero_force_world, glm::vec3{0.f}, dt);
             sync_rigid_to_ecs(e, rb, false);
             return;
         }
@@ -1085,13 +1135,28 @@ void fixed_step(flecs::world& world, f32 dt)
             thrusters, plant.frac_thrusters * eng_eff, force_body, torque_body);
         torque_body += ctrl.torque_input * kMaxTorqueNm * plant.frac_thrusters * eng_eff;
 
-        const glm::vec3 force_world  = body_to_world(rb.orientation, force_body);
+        const glm::vec3 force_world =
+            body_to_world(rb.orientation, force_body) + aero_force_world;
         const glm::vec3 torque_world = body_to_world(rb.orientation, torque_body);
 
         sync_rigid_to_ecs(e, rb, true);
         integrate_rigid_body(rb, force_world, torque_world, dt);
         sync_rigid_to_ecs(e, rb, false);
     });
+
+    // P2-04: HUD sample for the player ship (density this tick).
+    {
+        AtmosphereSample sample{};
+        world.each([&](flecs::entity e, const RigidBody6DOF& rb) {
+            if (sample.in_atmosphere || !e.has<PlayerShip>()) {
+                return;
+            }
+            glm::vec3 g{};
+            sample.density       = sample_atmosphere(world, rb.position, g);
+            sample.in_atmosphere = sample.density > 0.f;
+        });
+        world.set<AtmosphereSample>(sample);
+    }
 
     // NPC ships (no FlightControl): power + shields still tick (P2-03/P2-12).
     world.each([&](flecs::entity e, RigidBody6DOF&, PowerPlant& plant) {
@@ -1242,6 +1307,7 @@ flecs::entity spawn_player_ship(flecs::world& world, const glm::vec3& position)
             .set<ShieldGenerator>(shield)
             .set<ShipHull>(hull)
             .set<ShipSubsystems>(subsystems)
+            .set<AeroProfile>(AeroProfile{})
             .set<WeaponMountSet>(weapons)
             .set<FlightControl>(ctrl)
             .set<ecs::Position>(pos)

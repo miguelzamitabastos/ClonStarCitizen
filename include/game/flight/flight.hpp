@@ -182,6 +182,43 @@ struct ActiveTurretControl {
     flecs::entity_t seat   = 0;
 };
 
+// --- P2-04: atmospheric vs vacuum flight model ----------------------------------
+
+inline constexpr f32 kDefaultSeaLevelDensity = 1.2f;  // kg/m³ (Earth-like)
+inline constexpr f32 kDefaultSurfaceGravity  = 9.81f; // m/s² toward volume center
+inline constexpr f32 kDefaultDragArea        = 25.f;  // Cd·A combined (m²)
+inline constexpr f32 kDefaultLiftArea        = 8.f;   // Cl·A combined (m²)
+
+/// Spherical atmosphere around a planet. Density is `sea_level_density` at
+/// `inner_radius` (surface) and falls linearly to 0 at `outer_radius`.
+/// Ships inside also feel `surface_gravity` toward `center` (scaled by density).
+/// NOTE: `center` lives in the floating-origin relative frame — the P1D-07
+/// rebase pass shifts it like GravityZone.center.
+struct AtmosphereVolume {
+    glm::vec3 center{0.f};
+    f32       inner_radius      = 100.f;
+    f32       outer_radius      = 300.f;
+    f32       sea_level_density = kDefaultSeaLevelDensity;
+    f32       surface_gravity   = kDefaultSurfaceGravity;
+};
+
+/// Per-ship aerodynamic profile (quadratic drag + simplified lift along body up).
+struct AeroProfile {
+    f32 drag_area = kDefaultDragArea;
+    f32 lift_area = kDefaultLiftArea;
+};
+
+/// Flecs singleton: atmosphere sampled at the player ship this tick (HUD).
+struct AtmosphereSample {
+    f32  density       = 0.f;
+    bool in_atmosphere = false;
+};
+
+/// Highest atmosphere density (kg/m³) among volumes containing `pos` plus the
+/// gravity pull it implies. Returns 0 density in vacuum. Allocation-free.
+[[nodiscard]] f32 sample_atmosphere(
+    flecs::world& world, const glm::vec3& pos, glm::vec3& out_gravity_accel);
+
 struct FlightControl {
     bool      coupled      = true;
     glm::vec3 thrust_input{0.f}; // body: +X right, +Y up, +Z forward (!= local -Z)

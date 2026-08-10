@@ -164,6 +164,8 @@ void rebase_shift_all(flecs::world& world, const glm::vec3& delta)
     world.each([&](flight::RigidBody6DOF& rb) { shift_vec3(rb.position, delta); });
     world.each([&](character::GravityZone& z) { shift_vec3(z.center, delta); });
     world.each([&](LevelStreamTrigger& t) { shift_vec3(t.center, delta); });
+    // P2-04: atmósferas viven en el frame relativo, se desplazan igual.
+    world.each([&](flight::AtmosphereVolume& a) { shift_vec3(a.center, delta); });
     world.each([&](ecs::Camera3D& cam) {
         shift_vec3(cam.eye, delta);
         shift_vec3(cam.target, delta);
@@ -568,6 +570,18 @@ flecs::entity spawn_universe_test(flecs::world& world, const StarSystemData& dat
         "Planeta01Gravity");
 
     world.entity("StreamLandingZone").set<LevelStreamTrigger>(lz_trig);
+
+    // P2-04: atmósfera esférica del planeta (arrastre/sustentación/gravedad al
+    // acercarse a la LZ; el espacio abierto sigue siendo vacío puro).
+    if (planet_body != nullptr) {
+        flight::AtmosphereVolume atmo{};
+        atmo.center            = planet_body->position;
+        atmo.inner_radius      = planet_body->radius;
+        atmo.outer_radius      = planet_body->radius * 3.f;
+        atmo.sea_level_density = flight::kDefaultSeaLevelDensity;
+        atmo.surface_gravity   = flight::kDefaultSurfaceGravity * 0.85f;
+        world.entity("Planeta01Atmosphere").set<flight::AtmosphereVolume>(atmo);
+    }
 
     // Distant planet / star visual markers (always active — cheap cubes).
     if (planet_body != nullptr) {

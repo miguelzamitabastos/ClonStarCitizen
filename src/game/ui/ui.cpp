@@ -89,6 +89,20 @@ void draw_flight_hud(flecs::world& world)
         std::snprintf(line, sizeof(line), "CPL  %s", coupled ? "ON" : "OFF");
         ImGui::TextUnformatted(line);
 
+        // P2-04: atmospheric vs vacuum flight regime.
+        if (const flight::AtmosphereSample* atmo = world.try_get<flight::AtmosphereSample>()) {
+            if (atmo->in_atmosphere) {
+                std::snprintf(
+                    line,
+                    sizeof(line),
+                    "ATM  %.2f kg/m3",
+                    static_cast<double>(atmo->density));
+            } else {
+                std::snprintf(line, sizeof(line), "ATM  VACUUM");
+            }
+            ImGui::TextUnformatted(line);
+        }
+
         // P2-02: per-subsystem status (ENG / SHD-GEN / WPN / SEN).
         flight::SubsystemTelemetry subs{};
         flight::fill_player_subsystem_telemetry(world, subs);
