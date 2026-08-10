@@ -588,6 +588,31 @@ flecs::entity spawn_universe_test(flecs::world& world, const StarSystemData& dat
     flecs::entity ship =
         flight::spawn_player_ship(world, station_pos + glm::vec3{0.f, 5.f, 25.f});
 
+    // Optional CI smoke: CSC_FORCE_REBASE_SMOKE=1 teleports past threshold so the
+    // first fixed_step performs ≥1 rebase (logged + DebugUiStats.rebase_count).
+    if (const char* smoke = std::getenv("CSC_FORCE_REBASE_SMOKE");
+        smoke != nullptr && smoke[0] == '1') {
+        const glm::vec3 far_pos = station_pos + glm::vec3{0.f, 5.f, -(kFloatingOriginThreshold + 100.f)};
+        if (flight::RigidBody6DOF* rb = ship.try_get_mut<flight::RigidBody6DOF>()) {
+            rb->position = far_pos;
+        }
+        if (ecs::Position* p = ship.try_get_mut<ecs::Position>()) {
+            p->x = far_pos.x;
+            p->y = far_pos.y;
+            p->z = far_pos.z;
+        }
+        if (ecs::PreviousPosition* prev = ship.try_get_mut<ecs::PreviousPosition>()) {
+            prev->x = far_pos.x;
+            prev->y = far_pos.y;
+            prev->z = far_pos.z;
+        }
+        log::log_info(
+            log::LogCategory::Core,
+            "CSC_FORCE_REBASE_SMOKE: ship placed at z=%.0f (threshold=%.0f)",
+            static_cast<double>(far_pos.z),
+            static_cast<double>(kFloatingOriginThreshold));
+    }
+
     world.set<ecs::ControlMode>({ecs::ControlModeKind::ShipPilot});
 
     // Force initial stream evaluation so station interior loads at spawn.
