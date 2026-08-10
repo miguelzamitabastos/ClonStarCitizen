@@ -37,6 +37,53 @@ set(GLM_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(GLM_BUILD_INSTALL OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(glm)
 
+# tinygltf (header-only) — TINYGLTF_IMPLEMENTATION in mesh_loader.cpp
+FetchContent_Declare(
+    tinygltf
+    GIT_REPOSITORY https://github.com/syoyo/tinygltf.git
+    GIT_TAG        v2.9.3
+    GIT_SHALLOW    TRUE
+)
+FetchContent_GetProperties(tinygltf)
+if(NOT tinygltf_POPULATED)
+    FetchContent_Populate(tinygltf)
+endif()
+
+# Dear ImGui (debug overlay) — pin v1.91.0; compiled into a small static lib
+FetchContent_Declare(
+    imgui
+    GIT_REPOSITORY https://github.com/ocornut/imgui.git
+    GIT_TAG        v1.91.0
+    GIT_SHALLOW    TRUE
+)
+FetchContent_GetProperties(imgui)
+if(NOT imgui_POPULATED)
+    FetchContent_Populate(imgui)
+endif()
+
+add_library(imgui_vulkan STATIC
+    ${imgui_SOURCE_DIR}/imgui.cpp
+    ${imgui_SOURCE_DIR}/imgui_draw.cpp
+    ${imgui_SOURCE_DIR}/imgui_tables.cpp
+    ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp
+)
+target_include_directories(imgui_vulkan
+    PUBLIC
+        ${imgui_SOURCE_DIR}
+        ${imgui_SOURCE_DIR}/backends
+)
+target_link_libraries(imgui_vulkan
+    PUBLIC
+        Vulkan::Vulkan
+        glfw
+)
+
+find_package(Threads REQUIRED)
+
+option(CSC_ENABLE_DEBUG_UI "Force-enable Dear ImGui debug overlay (also on in Debug)" OFF)
+
 # --- Shader compilation (GLSL → SPIR-V) -------------------------------------
 find_program(GLSLC_EXECUTABLE
     NAMES glslc
@@ -58,6 +105,8 @@ file(MAKE_DIRECTORY ${SHADER_BINARY_DIR})
 set(SHADER_SOURCES
     ${SHADER_SOURCE_DIR}/triangle.vert
     ${SHADER_SOURCE_DIR}/triangle.frag
+    ${SHADER_SOURCE_DIR}/mesh.vert
+    ${SHADER_SOURCE_DIR}/mesh.frag
 )
 
 set(SHADER_SPV_FILES "")
@@ -79,12 +128,26 @@ add_custom_target(clon_shaders ALL DEPENDS ${SHADER_SPV_FILES})
 # --- Engine sources ---------------------------------------------------------
 set(ENGINE_SOURCES
     src/main.cpp
+    src/engine/config/config.cpp
+    src/engine/log/log.cpp
     src/engine/memory/arena.cpp
+    src/engine/input/input.cpp
     src/engine/ecs/world.cpp
+    src/engine/assets/mesh_loader.cpp
+    src/engine/render/pipeline.cpp
+    src/engine/scene/scene.cpp
     src/engine/platform/window.cpp
     src/engine/vulkan/instance.cpp
     src/engine/vulkan/device.cpp
     src/engine/vulkan/renderer.cpp
+    src/engine/debug/debug_ui.cpp
+    src/game/flight/flight.cpp
+    src/game/character/character.cpp
+    src/game/economy/economy.cpp
+    src/game/world/world.cpp
+    src/game/ui/ui.cpp
+    src/game/audio/audio.cpp
+    src/game/save/save.cpp
 )
 
 add_executable(clon_star_citizen ${ENGINE_SOURCES})
@@ -93,6 +156,7 @@ add_dependencies(clon_star_citizen clon_shaders)
 target_include_directories(clon_star_citizen
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${tinygltf_SOURCE_DIR}
 )
 
 target_link_libraries(clon_star_citizen
@@ -101,12 +165,15 @@ target_link_libraries(clon_star_citizen
         glfw
         flecs::flecs_static
         glm::glm
+        imgui_vulkan
+        Threads::Threads
 )
 
 target_compile_definitions(clon_star_citizen
     PRIVATE
         $<$<CONFIG:Debug>:CSC_DEBUG=1>
         $<$<NOT:$<CONFIG:Debug>>:CSC_DEBUG=0>
+        $<IF:$<OR:$<BOOL:${CSC_ENABLE_DEBUG_UI}>,$<CONFIG:Debug>>,CSC_DEBUG_UI=1,CSC_DEBUG_UI=0>
         GLM_FORCE_RADIANS
         GLM_FORCE_DEPTH_ZERO_TO_ONE
         CSC_SHADER_DIR="${SHADER_BINARY_DIR}"
@@ -122,4 +189,7 @@ message(STATUS "ClonStarCitizen ${PROJECT_VERSION} — C++${CMAKE_CXX_STANDARD}"
 message(STATUS "  Vulkan: ${Vulkan_VERSION}")
 message(STATUS "  Flecs:  v4.1.6 (FetchContent)")
 message(STATUS "  GLM:    1.0.1 (FetchContent, FORCE_RADIANS + DEPTH_ZERO_TO_ONE)")
+message(STATUS "  tinygltf: v2.9.3 (FetchContent, header-only)")
+message(STATUS "  ImGui:  v1.91.0 (FetchContent, debug overlay)")
+message(STATUS "  CSC_ENABLE_DEBUG_UI=${CSC_ENABLE_DEBUG_UI}")
 message(STATUS "  Shaders:${SHADER_BINARY_DIR}")

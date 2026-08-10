@@ -1,6 +1,7 @@
 #include "engine/vulkan/instance.hpp"
 
-#include <cstdio>
+#include "engine/log/log.hpp"
+
 #include <cstring>
 #include <vector>
 
@@ -16,7 +17,7 @@ VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(
     const VkDebugUtilsMessengerCallbackDataEXT* callback_data,
     void* /*user_data*/)
 {
-    std::fprintf(stderr, "[vulkan] %s\n", callback_data->pMessage);
+    log::log_warn(log::LogCategory::Vulkan, "%s", callback_data->pMessage);
     return VK_FALSE;
 }
 
@@ -87,7 +88,8 @@ bool instance_create(InstanceState& state, const InstanceCreateInfo& info, const
     state.validation_enabled = validation_ok;
 
     if (want_validation && !validation_ok) {
-        std::fprintf(stderr, "[vulkan] Validation layers requested but not available; continuing without them.\n");
+        log::log_warn(log::LogCategory::Vulkan,
+            "Validation layers requested but not available; continuing without them.");
     }
 
     VkApplicationInfo app_info{};
@@ -101,7 +103,7 @@ bool instance_create(InstanceState& state, const InstanceCreateInfo& info, const
     u32 glfw_ext_count = 0;
     const char** glfw_exts = glfwGetRequiredInstanceExtensions(&glfw_ext_count);
     if (glfw_exts == nullptr) {
-        std::fprintf(stderr, "[vulkan] glfwGetRequiredInstanceExtensions failed.\n");
+        log::log_error(log::LogCategory::Vulkan, "glfwGetRequiredInstanceExtensions failed.");
         return false;
     }
 
@@ -128,13 +130,13 @@ bool instance_create(InstanceState& state, const InstanceCreateInfo& info, const
 
     const VkResult result = vkCreateInstance(&create_info, nullptr, &state.instance);
     if (result != VK_SUCCESS) {
-        std::fprintf(stderr, "[vulkan] vkCreateInstance failed (%d).\n", static_cast<int>(result));
+        log::log_error(log::LogCategory::Vulkan, "vkCreateInstance failed (%d).", static_cast<int>(result));
         return false;
     }
 
     if (validation_ok) {
         if (create_debug_messenger(state.instance, &debug_create_info, &state.debug_messenger) != VK_SUCCESS) {
-            std::fprintf(stderr, "[vulkan] Failed to set up debug messenger.\n");
+            log::log_error(log::LogCategory::Vulkan, "Failed to set up debug messenger.");
             instance_destroy(state);
             return false;
         }
