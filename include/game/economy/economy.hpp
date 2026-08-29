@@ -79,6 +79,14 @@ struct MarketTable {
 enum class MissionType : u8 {
     Delivery = 0,
     Visit    = 1,
+    /// P2-10: kill `qty_required` NpcCombatant of `target_faction_id` (P2-06
+    /// on-foot AI, no parallel implementation) spawned near the accepting
+    /// player; turn in at `to_market` once all are dead.
+    Combat   = 2,
+    /// P2-10: as Combat, plus a protected NPC (ai::AiThreatTarget, P2-11)
+    /// spawned alongside the hostiles — the mission fails immediately if it
+    /// dies before the hostiles are cleared, instead of just not completing.
+    Escort   = 3,
 };
 
 struct MissionTemplate {
@@ -86,6 +94,7 @@ struct MissionTemplate {
     MissionType type          = MissionType::Delivery;
     char        name[kMaxNameBytes]{};
     u32         commodity_id  = 0;
+    /// Delivery/Visit: cargo qty range. Combat/Escort: hostile count range.
     u32         qty_min       = 1;
     u32         qty_max       = 1;
     i32         reward_min    = 0;
@@ -101,6 +110,9 @@ struct MissionTemplate {
     /// shares this group permanently locks out every other template in it
     /// (the player's choice happens at accept time, not at completion).
     u32         branch_group  = 0;
+    /// P2-10: hostile faction spawned for Combat/Escort (unused otherwise) —
+    /// separate from `faction_id`/`rep_delta`, which stay the reward faction.
+    u32         target_faction_id = 0;
 };
 
 struct MissionTemplateTable {
@@ -121,11 +133,31 @@ struct MissionActive {
     u32         to_market      = 0;
     u32         location_id    = 0;
     bool        completed      = false;
+    /// P2-10: Combat/Escort progress — kills_required reuses qty_required's
+    /// role (set from the template's rolled qty) rather than duplicating it.
+    u32             kills_confirmed   = 0;
+    u32             target_faction_id = 0;
+    /// P2-10 (Escort only): true the instant the protected NPC dies — the
+    /// mission is over (no reward), not just "not yet complete".
+    bool            failed            = false;
+    /// P2-10 (Escort only): entity id of the spawned protected NPC (0 = none).
+    flecs::entity_t escort_target     = 0;
 };
 
 struct MissionActivePool {
     memory::Pool<MissionActive, kMaxActiveMissions> pool{};
     u32                                             rng_state = 1;
+};
+
+inline constexpr u32 kMaxMissionHostiles = 4; ///< P2-10: hostiles spawned per encounter, hard cap
+
+/// P2-10: attaches a spawned Combat/Escort NPC to the MissionActivePool slot
+/// that spawned it. apply_damage_events (flight.cpp) reports back to that
+/// slot when this entity dies — a kill (is_escort_target=false) or a mission
+/// failure (is_escort_target=true, the protected NPC died).
+struct MissionLink {
+    u32  slot             = 0xFFFFFFFFu;
+    bool is_escort_target = false;
 };
 
 /// P2-09: persistent record of which mission templates the player has ever
@@ -280,11 +312,15 @@ struct EconomyDebugSnapshot {
 
 /// P2-09: on success, locks `template_id`'s branch_group (if nonzero) —
 /// permanent from this point, even before the mission completes.
+/// P2-10: `out_slot_index` (optional) reports which MissionActivePool slot
+/// got the generated mission — the caller uses it to spawn the Combat/Escort
+/// encounter linked to that exact slot (MissionLink).
 [[nodiscard]] bool mission_try_accept(
     MissionActivePool&        pool,
     const MissionTemplateTable& templates,
     u32                        template_id,
-    CompletedMissions&         completed);
+    CompletedMissions&         completed,
+    u32*                       out_slot_index = nullptr);
 
 /// P2-08: `out_commodity_id`/`out_qty` report what a completed Delivery mission
 /// dropped off (0/0 for Visit missions or on failure) — the caller uses this to

@@ -190,8 +190,13 @@ u32 collect_target_candidates(flecs::world& world, TargetCandidate* out, u32 cap
     });
 
     // Objetivos marcados (escoltas P2-10) — lado del jugador.
-    world.each([&](flecs::entity e, const AiThreatTarget&, const ecs::Position& p) {
-        if (n >= capacity || entity_disabled(e)) {
+    // AiThreatTarget es un tag vacío: pedirlo POR REFERENCIA como término de
+    // query revienta flecs (entity_index.c assert) — mismo gotcha ya pisado
+    // con CharacterDead/PlayerCharacter (ver character.cpp, P2-07). Se
+    // consulta por Position (el único componente que el tag garantiza, según
+    // su propio comentario) y se filtra con has<>() en el cuerpo.
+    world.each([&](flecs::entity e, const ecs::Position& p) {
+        if (n >= capacity || !e.has<AiThreatTarget>() || entity_disabled(e)) {
             return;
         }
         u32 faction = 0;

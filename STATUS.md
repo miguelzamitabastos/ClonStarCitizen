@@ -14,10 +14,10 @@ Fase 1 validada físicamente por el usuario (2026-08-10) — apertura de Fase 2.
   - [x] P2-05 Inventario completo (slots equipo, recogibles, uso de items)
   - [x] P2-06 IA combate a pie (detección, cobertura, disparo) sobre P2-11
   - [x] P2-07 Daño por zona (torso/extremidad) + muerte/reaparición jugador
-- Economía y misiones (P2-08..10): [##] 2/3
+- Economía y misiones (P2-08..10): [###] 3/3 — COMPLETADO
   - [x] P2-08 Simulación económica dinámica (producción/consumo, eventos de precio)
   - [x] P2-09 Misiones encadenadas con ramificación simple
-  - [ ] P2-10 Misiones combate/escolta reutilizando IA P2-03/P2-06
+  - [x] P2-10 Misiones combate/escolta reutilizando IA P2-03/P2-06
 - IA y facciones (P2-11..12):  [#] 1/2
   - [x] P2-11 Framework de IA compartido (FSM patrulla/alerta/combate/huida + hostilidad por reputación)
   - [ ] P2-12 Encuentros aleatorios por proximidad desde Pool
@@ -103,6 +103,36 @@ Fase 1 validada físicamente por el usuario (2026-08-10) — apertura de Fase 2.
    **Fuera de alcance, anotado** (mismo criterio que P2-02/P2-07):
    `CompletedMissions` no se serializa en el save v1 todavía — se resuelve en
    el bump de schema que junte todos los componentes nuevos de Fase 2.
+6. **P2-10 misiones combate/escolta:** `MissionType` gana `Combat`/`Escort` —
+   sin IA nueva, reutilizan `character::spawn_npc_combatant` (P2-06) y
+   `ai::AiThreatTarget`/`FactionMember` (P2-11, el tag ya existía pensado
+   exactamente para esto). `qty_min/qty_max` doblan como rango de hostiles
+   (tope `kMaxMissionHostiles=4`); `target_faction_id` (nuevo campo) es la
+   facción hostil a spawnear, separado de `faction_id`/`rep_delta` (siguen
+   siendo la facción de recompensa). Nuevo componente `MissionLink{slot,
+   is_escort_target}` liga cada hostil/escoltado spawneado a su slot del
+   `MissionActivePool`; `apply_damage_events` (flight.cpp) reporta bajas
+   (`kills_confirmed++`) o fallo inmediato (`is_escort_target` — libera el
+   slot sin recompensa) al morir. El encuentro spawnea junto al jugador en el
+   momento de aceptar (sin registro de "ubicación de mundo" para mercados,
+   fuera de alcance de esta tarea). Turn-in reutiliza el NPC de mercado ya
+   existente (matchea por `market_id`, no por plantilla).
+   **Dos bugs reales encontrados y corregidos durante la verificación** (los
+   tres viven en el mismo patrón de gotchas de flecs con tipos vacíos, ver
+   sección de bitácora):
+   - `ai::collect_target_candidates` pedía `AiThreatTarget` (tag vacío) por
+     referencia en `world.each()` — dormido desde P2-11 porque nada lo usaba
+     todavía; revienta en cuanto se usa. Mismo arreglo que P2-07: consulta por
+     `Position` + `.has<>()` en el cuerpo.
+   - `.set<ai::AiThreatTarget>({})` sobre un tag vacío también revienta
+     flecs (`operation invalid for empty type`) — los tags se añaden con
+     `.add<T>()`, nunca `.set<T>({})`.
+   - (No-bug, error de implementación propio) se me olvidó añadir el parseo
+     de `target_faction_id` en `apply_template_kv` — los hostiles spawneaban
+     con facción 0 (Comercio) en vez de la 3 (Piratas) del template.
+   Los tres solo salieron a la luz forzando manualmente un accept + spawn de
+   escolta en una sesión headless (nada dispara Combat/Escort sin interacción
+   real del jugador) — ver bitácora para el procedimiento de verificación.
 
 ## Fase 1 — Vertical Slice — **COMPLETADA y validada** (histórico)
 
@@ -247,6 +277,18 @@ Cuando una entidad lleva `LocalToShip { ship_entity, local_position, local_orien
 5. Al salir (quitar `LocalToShip`), se bakea la pose mundial y la sim pasa a espacio mundo / GravityZone.
 
 ## Bitácora (más reciente arriba, una línea por tarea)
+- 2026-08-30 [P2-10] Misiones combate/escolta: `MissionType::Combat/Escort` sobre
+  la IA compartida existente, sin código nuevo de decisión — `spawn_npc_combatant`
+  (P2-06) + `AiThreatTarget`/`FactionMember` (P2-11). `MissionLink` liga cada
+  hostil/escoltado a su slot de `MissionActivePool`; `apply_damage_events` reporta
+  bajas o fallo (escolta muerta = misión perdida, slot liberado sin recompensa) al
+  morir. Fase 2 bloque "Economía y misiones" COMPLETADO (P2-08..10 3/3).
+  Verificación forzada (accept manual sin input real, ver procedimiento abajo)
+  encontró y corrigió 2 bugs reales de flecs con tipos vacíos — `AiThreatTarget`
+  pedido por referencia en `world.each()` (dormido desde P2-11) y
+  `.set<AiThreatTarget>({})` en vez de `.add<>()` — más un `target_faction_id` sin
+  parsear en `apply_template_kv`. Regresión limpia en 6 escenas + CSC_SAVE_SMOKE
+  PASS tras los arreglos.
 - 2026-08-30 [P2-09] Misiones encadenadas: `MissionTemplate.requires_completed_id` +
   `branch_group`; singleton `CompletedMissions` (done[] + branch_locked[]). Demo:
   OreDelivery (id=0) desbloquea ColonistAid (id=2) / SecurityRun (id=3) en

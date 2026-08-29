@@ -594,6 +594,37 @@ void apply_damage_events(flecs::world& world)
             if (e.has<character::PlayerCharacter>()) {
                 e.set<character::RespawnTimer>({character::kRespawnDelaySeconds});
             }
+            // P2-10: report this death back to the Combat/Escort mission
+            // that spawned it (if any) — a kill, or a mission failure if the
+            // protected NPC just died. is_active() guards a slot already
+            // released this same tick (e.g. the escort target and a hostile
+            // both died together) instead of touching stale data.
+            if (const economy::MissionLink* link = e.try_get<economy::MissionLink>()) {
+                if (economy::MissionActivePool* missions =
+                        world.try_get_mut<economy::MissionActivePool>();
+                    missions != nullptr && link->slot < economy::kMaxActiveMissions
+                    && missions->pool.is_active(link->slot)) {
+                    economy::MissionActive& m = missions->pool.slots[link->slot];
+                    if (link->is_escort_target) {
+                        log::log_info(
+                            log::LogCategory::Game,
+                            "Mission failed: escort target lost (slot=%u)",
+                            link->slot);
+                        missions->pool.release(link->slot);
+                    } else {
+                        m.kills_confirmed =
+                            (m.kills_confirmed + 1u < m.qty_required)
+                                ? m.kills_confirmed + 1u
+                                : m.qty_required;
+                        log::log_info(
+                            log::LogCategory::Game,
+                            "Mission kill %u/%u (slot=%u)",
+                            m.kills_confirmed,
+                            m.qty_required,
+                            link->slot);
+                    }
+                }
+            }
         }
     }
 }

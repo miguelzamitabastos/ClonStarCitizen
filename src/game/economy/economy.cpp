@@ -2,9 +2,11 @@
 
 #include "engine/ecs/world.hpp"
 #include "engine/log/log.hpp"
+#include "game/ai/ai.hpp"
 #include "game/character/character.hpp"
 #include "game/flight/flight.hpp"
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 
@@ -70,9 +72,19 @@ char* trim_inplace(char* s)
 
 [[nodiscard]] MissionType parse_mission_type(const char* text)
 {
-    if (text != nullptr
-        && (std::strcmp(text, "visit") == 0 || std::strcmp(text, "Visit") == 0)) {
+    if (text == nullptr) {
+        return MissionType::Delivery;
+    }
+    if (std::strcmp(text, "visit") == 0 || std::strcmp(text, "Visit") == 0) {
         return MissionType::Visit;
+    }
+    // P2-10: combat/escort reuse the shared AI (P2-06 on-foot NpcCombatant +
+    // P2-11 AiThreatTarget) — no parallel AI, just a new MissionType.
+    if (std::strcmp(text, "combat") == 0 || std::strcmp(text, "Combat") == 0) {
+        return MissionType::Combat;
+    }
+    if (std::strcmp(text, "escort") == 0 || std::strcmp(text, "Escort") == 0) {
+        return MissionType::Escort;
     }
     return MissionType::Delivery;
 }
@@ -291,6 +303,15 @@ bool apply_template_kv(MissionTemplate& t, const char* key, const char* value)
         unsigned v = 0;
         if (std::sscanf(value, "%u", &v) == 1) {
             t.branch_group = v;
+            return true;
+        }
+        return false;
+    }
+    // P2-10: hostile faction spawned for Combat/Escort (unused otherwise).
+    if (std::strcmp(key, "target_faction_id") == 0) {
+        unsigned v = 0;
+        if (std::sscanf(value, "%u", &v) == 1) {
+            t.target_faction_id = v;
             return true;
         }
         return false;
@@ -673,6 +694,47 @@ void run_economic_tick(flecs::world& world)
     }
 }
 
+// --- P2-10: combat/escort mission encounters (reuses P2-06/P2-11 AI) --------
+
+/// Spawns the hostiles (and, for Escort, the protected NPC) for a freshly
+/// accepted Combat/Escort mission, all tagged with MissionLink{slot} so
+/// apply_damage_events (flight.cpp) can report kills/failure back to it.
+/// Reuses character::spawn_npc_combatant (P2-06) and ai::AiThreatTarget
+/// (P2-11) verbatim — no new AI, per the roadmap's explicit constraint.
+void spawn_mission_encounter(
+    flecs::world& world, const MissionActive& m, u32 slot_index, const glm::vec3& near_pos)
+{
+    const character::PatrolRoute idle_route{}; // count=0: holds position until it detects a target
+    for (u32 i = 0; i < m.qty_required && i < kMaxMissionHostiles; ++i) {
+        // Spread hostiles around near_pos instead of stacking them on one spot.
+        const f32 angle = static_cast<f32>(i) * (6.2831853f / static_cast<f32>(kMaxMissionHostiles));
+        const glm::vec3 offset{std::cos(angle) * 4.f, 0.f, std::sin(angle) * 4.f};
+        flecs::entity hostile = character::spawn_npc_combatant(
+            world, near_pos + offset, m.target_faction_id, idle_route, "MissionHostile");
+        hostile.set<MissionLink>({slot_index, false});
+    }
+
+    if (m.type == MissionType::Escort) {
+        flecs::entity escort =
+            character::spawn_health_target(world, near_pos + glm::vec3{0.f, 0.f, -3.f}, 1.f);
+        escort.set<MissionLink>({slot_index, true});
+        // AiThreatTarget is an empty tag — flecs rejects .set() on zero-size
+        // types ("operation invalid for empty type"); .add() is the correct
+        // call for tags (same family of gotcha as the each()-by-ref one
+        // fixed above in collect_target_candidates).
+        escort.add<ai::AiThreatTarget>();
+        escort.set<ai::FactionMember>({m.faction_id});
+    }
+
+    log::log_info(
+        log::LogCategory::Game,
+        "Mission encounter spawned (slot=%u type=%s hostiles=%u%s)",
+        slot_index,
+        m.type == MissionType::Escort ? "Escort" : "Combat",
+        m.qty_required,
+        m.type == MissionType::Escort ? " + escort target" : "");
+}
+
 void spawn_market_marker(
     flecs::world& world, const char* name, const glm::vec3& center, f32 scale)
 {
@@ -902,6 +964,13 @@ bool mission_generate_from_template(
     if (out.type == MissionType::Visit) {
         out.qty_required = 1;
     }
+    if (out.type == MissionType::Combat || out.type == MissionType::Escort) {
+        // qty_required doubles as "hostiles to defeat" for these types —
+        // capped so spawn_mission_encounter never exceeds kMaxMissionHostiles.
+        out.qty_required =
+            (out.qty_required > kMaxMissionHostiles) ? kMaxMissionHostiles : out.qty_required;
+        out.target_faction_id = tmpl.target_faction_id;
+    }
     return true;
 }
 
@@ -924,7 +993,8 @@ bool mission_try_accept(
     MissionActivePool& pool,
     const MissionTemplateTable& templates,
     u32 template_id,
-    CompletedMissions& completed)
+    CompletedMissions& completed,
+    u32* out_slot_index)
 {
     const MissionTemplate* tmpl = find_template(templates, template_id);
     if (tmpl == nullptr || !mission_template_available(*tmpl, completed)) {
@@ -948,6 +1018,9 @@ bool mission_try_accept(
     // P2-09: choice locks in immediately, not just on completion.
     if (tmpl->branch_group != 0 && tmpl->branch_group < kMaxBranchGroups) {
         completed.branch_locked[tmpl->branch_group] = true;
+    }
+    if (out_slot_index != nullptr) {
+        *out_slot_index = static_cast<u32>(idx);
     }
     return true;
 }
@@ -986,6 +1059,14 @@ bool mission_try_complete_at_market(
             out_qty          = m.qty_delivered; // P2-08: caller queues a PriceEvent
         } else if (m.type == MissionType::Visit) {
             if (m.qty_delivered < 1) {
+                continue;
+            }
+        } else if (m.type == MissionType::Combat || m.type == MissionType::Escort) {
+            // P2-10: reuses the shared AI's kill reporting (MissionLink hook
+            // in flight.cpp's apply_damage_events) — nothing to check here
+            // beyond "enough kills confirmed". A failed Escort never reaches
+            // this loop: the death hook releases the slot immediately.
+            if (m.kills_confirmed < m.qty_required) {
                 continue;
             }
         } else {
@@ -1229,7 +1310,21 @@ bool handle_interact(flecs::world& world, flecs::entity_t actor_id, flecs::entit
         }
 
         if (dlg->is_mission_giver) {
-            if (mission_try_accept(*missions, *templates, dlg->template_id, *completed)) {
+            u32 slot_index = 0;
+            if (mission_try_accept(
+                    *missions, *templates, dlg->template_id, *completed, &slot_index)) {
+                // P2-10: Combat/Escort spawn their encounter right where the
+                // player accepted — reuses P2-06's NpcCombatant / P2-11's
+                // AiThreatTarget, no location registry needed for this scope.
+                const MissionActive& generated = missions->pool.slots[slot_index];
+                if (generated.type == MissionType::Combat
+                    || generated.type == MissionType::Escort) {
+                    glm::vec3 near_pos{0.f};
+                    if (const ecs::Position* p = actor.try_get<ecs::Position>()) {
+                        near_pos = glm::vec3{p->x, p->y, p->z} + glm::vec3{0.f, 0.f, -8.f};
+                    }
+                    spawn_mission_encounter(world, generated, slot_index, near_pos);
+                }
                 log::log_info(
                     log::LogCategory::Game,
                     "Accepted mission template %u (active=%zu)",
@@ -1455,6 +1550,26 @@ bool setup_economy_test_scene(flecs::world& world, f32 aspect)
         false,
         1,
         "Security Run (branch B)");
+    // P2-10: combat/escort — always offerable (no prerequisite/branch). The
+    // encounter spawns right where the player is standing on accept, and the
+    // existing "Turn In Mission" NPC above (market_id=1) completes either —
+    // it matches by market, not by template.
+    (void)spawn_mission_npc(
+        world,
+        kMarketB + glm::vec3{-8.f, 1.2f, -1.5f},
+        4,
+        true,
+        false,
+        1,
+        "Clear Pirates");
+    (void)spawn_mission_npc(
+        world,
+        kMarketB + glm::vec3{-10.f, 1.2f, -1.5f},
+        5,
+        true,
+        false,
+        1,
+        "Escort Trader");
     (void)spawn_travel_pad(
         world,
         kMarketB + glm::vec3{2.5f, 1.1f, 0.f},
