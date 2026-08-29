@@ -276,6 +276,25 @@ bool apply_template_kv(MissionTemplate& t, const char* key, const char* value)
         }
         return false;
     }
+    // P2-09: chained missions — omit for "always offerable" (default sentinel).
+    if (std::strcmp(key, "requires_completed_id") == 0) {
+        unsigned v = 0;
+        if (std::sscanf(value, "%u", &v) == 1) {
+            t.requires_completed_id = v;
+            return true;
+        }
+        return false;
+    }
+    // P2-09: simple branching — templates sharing a nonzero group are
+    // mutually exclusive (accepting one locks out the rest permanently).
+    if (std::strcmp(key, "branch_group") == 0) {
+        unsigned v = 0;
+        if (std::sscanf(value, "%u", &v) == 1) {
+            t.branch_group = v;
+            return true;
+        }
+        return false;
+    }
     return false;
 }
 
@@ -886,11 +905,29 @@ bool mission_generate_from_template(
     return true;
 }
 
+bool mission_template_available(const MissionTemplate& tmpl, const CompletedMissions& completed)
+{
+    if (tmpl.requires_completed_id != kNoMissionRequirement) {
+        if (tmpl.requires_completed_id >= kMaxMissionTemplates
+            || !completed.done[tmpl.requires_completed_id]) {
+            return false;
+        }
+    }
+    if (tmpl.branch_group != 0 && tmpl.branch_group < kMaxBranchGroups
+        && completed.branch_locked[tmpl.branch_group]) {
+        return false;
+    }
+    return true;
+}
+
 bool mission_try_accept(
-    MissionActivePool& pool, const MissionTemplateTable& templates, u32 template_id)
+    MissionActivePool& pool,
+    const MissionTemplateTable& templates,
+    u32 template_id,
+    CompletedMissions& completed)
 {
     const MissionTemplate* tmpl = find_template(templates, template_id);
-    if (tmpl == nullptr) {
+    if (tmpl == nullptr || !mission_template_available(*tmpl, completed)) {
         return false;
     }
     for (std::size_t i = 0; i < kMaxActiveMissions; ++i) {
@@ -908,6 +945,10 @@ bool mission_try_accept(
         return false;
     }
     pool.pool.slots[idx] = generated;
+    // P2-09: choice locks in immediately, not just on completion.
+    if (tmpl->branch_group != 0 && tmpl->branch_group < kMaxBranchGroups) {
+        completed.branch_locked[tmpl->branch_group] = true;
+    }
     return true;
 }
 
@@ -916,6 +957,7 @@ bool mission_try_complete_at_market(
     CargoHold& hold,
     PlayerWallet& wallet,
     FactionReputation& rep,
+    CompletedMissions& completed,
     u32 market_id,
     u32& out_commodity_id,
     u32& out_qty)
@@ -956,6 +998,11 @@ bool mission_try_complete_at_market(
                 clampf(rep.values[m.faction_id] + m.rep_delta, -1.f, 1.f);
         }
         m.completed = true;
+        // P2-09: unlock any template chained off this one before releasing —
+        // the slot's data is gone after release(), record what mattered now.
+        if (m.template_id < kMaxMissionTemplates) {
+            completed.done[m.template_id] = true;
+        }
         pool.pool.release(i);
         return true;
     }
@@ -981,6 +1028,9 @@ void register_systems(flecs::world& world)
     }
     if (world.try_get<EconomyClock>() == nullptr) {
         world.set<EconomyClock>(EconomyClock{});
+    }
+    if (world.try_get<CompletedMissions>() == nullptr) {
+        world.set<CompletedMissions>(CompletedMissions{});
     }
 }
 
@@ -1015,6 +1065,9 @@ bool load_economy_data(flecs::world& world)
     }
     if (world.try_get<EconomyClock>() == nullptr) {
         world.set<EconomyClock>(EconomyClock{});
+    }
+    if (world.try_get<CompletedMissions>() == nullptr) {
+        world.set<CompletedMissions>(CompletedMissions{});
     }
 
     return ok_c && ok_m && ok_t;
@@ -1055,6 +1108,7 @@ bool handle_interact(flecs::world& world, flecs::entity_t actor_id, flecs::entit
     MissionActivePool*       missions    = world.try_get_mut<MissionActivePool>();
     MissionTemplateTable*    templates   = world.try_get_mut<MissionTemplateTable>();
     FactionReputation*       rep         = world.try_get_mut<FactionReputation>();
+    CompletedMissions*       completed   = world.try_get_mut<CompletedMissions>();
     CargoHold*               hold        = find_player_cargo(world);
 
     if (const TravelPad* pad = target.try_get<TravelPad>()) {
@@ -1134,7 +1188,7 @@ bool handle_interact(flecs::world& world, flecs::entity_t actor_id, flecs::entit
 
     if (const Dialogue* dlg = target.try_get<Dialogue>()) {
         if (missions == nullptr || templates == nullptr || wallet == nullptr || hold == nullptr
-            || rep == nullptr) {
+            || rep == nullptr || completed == nullptr) {
             return true;
         }
 
@@ -1142,8 +1196,8 @@ bool handle_interact(flecs::world& world, flecs::entity_t actor_id, flecs::entit
             u32 delivered_commodity = 0;
             u32 delivered_qty       = 0;
             if (mission_try_complete_at_market(
-                    *missions, *hold, *wallet, *rep, dlg->market_id, delivered_commodity,
-                    delivered_qty)) {
+                    *missions, *hold, *wallet, *rep, *completed, dlg->market_id,
+                    delivered_commodity, delivered_qty)) {
                 // P2-08: goods delivered in bulk flood the local market —
                 // queued, applied at the next economic tick (never immediate).
                 if (delivered_qty > 0) {
@@ -1175,7 +1229,7 @@ bool handle_interact(flecs::world& world, flecs::entity_t actor_id, flecs::entit
         }
 
         if (dlg->is_mission_giver) {
-            if (mission_try_accept(*missions, *templates, dlg->template_id)) {
+            if (mission_try_accept(*missions, *templates, dlg->template_id, *completed)) {
                 log::log_info(
                     log::LogCategory::Game,
                     "Accepted mission template %u (active=%zu)",
@@ -1184,7 +1238,8 @@ bool handle_interact(flecs::world& world, flecs::entity_t actor_id, flecs::entit
             } else {
                 log::log_info(
                     log::LogCategory::Game,
-                    "Could not accept mission template %u (duplicate or pool full)",
+                    "Could not accept mission template %u (duplicate, pool full, "
+                    "prerequisite not met, or branch already locked)",
                     dlg->template_id);
             }
             return true;
@@ -1382,12 +1437,42 @@ bool setup_economy_test_scene(flecs::world& world, f32 aspect)
         true,
         1,
         "Turn In Mission");
+    // P2-09: chained branch — unlocked only after OreDelivery (id=0) turns in
+    // above; accepting either permanently locks out the other (branch_group=1).
+    (void)spawn_mission_npc(
+        world,
+        kMarketB + glm::vec3{-4.f, 1.2f, -1.5f},
+        2,
+        true,
+        false,
+        1,
+        "Aid Colonists (branch A)");
+    (void)spawn_mission_npc(
+        world,
+        kMarketB + glm::vec3{-6.f, 1.2f, -1.5f},
+        3,
+        true,
+        false,
+        1,
+        "Security Run (branch B)");
     (void)spawn_travel_pad(
         world,
         kMarketB + glm::vec3{2.5f, 1.1f, 0.f},
         kMarketA + glm::vec3{0.f, 0.9f, 1.5f},
         0,
         "Travel -> A");
+
+    // P2-09: turn-in point for whichever branch was chosen at MarketB
+    // (both templates 2/3 have to_market=0) — market_id, not template_id,
+    // is what mission_try_complete_at_market matches on.
+    (void)spawn_mission_npc(
+        world,
+        kMarketA + glm::vec3{-4.f, 1.2f, -1.5f},
+        0,
+        false,
+        true,
+        0,
+        "Turn In Branch Mission");
 
     world.set<ecs::ControlMode>({ecs::ControlModeKind::OnFoot});
 

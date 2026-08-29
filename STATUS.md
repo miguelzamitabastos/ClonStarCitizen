@@ -14,9 +14,9 @@ Fase 1 validada físicamente por el usuario (2026-08-10) — apertura de Fase 2.
   - [x] P2-05 Inventario completo (slots equipo, recogibles, uso de items)
   - [x] P2-06 IA combate a pie (detección, cobertura, disparo) sobre P2-11
   - [x] P2-07 Daño por zona (torso/extremidad) + muerte/reaparición jugador
-- Economía y misiones (P2-08..10): [#] 1/3
+- Economía y misiones (P2-08..10): [##] 2/3
   - [x] P2-08 Simulación económica dinámica (producción/consumo, eventos de precio)
-  - [ ] P2-09 Misiones encadenadas con ramificación simple
+  - [x] P2-09 Misiones encadenadas con ramificación simple
   - [ ] P2-10 Misiones combate/escolta reutilizando IA P2-03/P2-06
 - IA y facciones (P2-11..12):  [#] 1/2
   - [x] P2-11 Framework de IA compartido (FSM patrulla/alerta/combate/huida + hostilidad por reputación)
@@ -85,6 +85,24 @@ Fase 1 validada físicamente por el usuario (2026-08-10) — apertura de Fase 2.
    `PriceEvent` con ese `qty` como delta positivo — cuanto más grande la
    entrega, mayor el efecto en precio, sin lógica nueva. Todo pasa por la
    misma cola/tick, nunca se aplica un delta de precio de forma inmediata.
+5. **P2-09 misiones encadenadas:** `MissionTemplate` gana dos campos —
+   `requires_completed_id` (sentinel `kNoMissionRequirement`, ya que el id 0 es
+   una plantilla válida; omitido en cfg = siempre ofertable) y `branch_group`
+   (0 = sin rama; no-cero = plantillas del mismo grupo son mutuamente
+   excluyentes). Nuevo singleton `CompletedMissions`: `done[template_id]`
+   (permite desbloquear encadenadas) + `branch_locked[group]` (se marca al
+   **aceptar**, no al completar — la elección del jugador cierra la rama
+   alternativa de inmediato, no al final). `mission_try_complete_at_market`
+   marca `done` antes de liberar el slot del pool (los datos desaparecen tras
+   `release()`). Demo en `economy_test`: completar `OreDelivery` (id=0)
+   desbloquea dos NPCs en MarketB — "Aid Colonists" (id=2, facción Colonos) y
+   "Security Run" (id=3, facción Seguridad), `branch_group=1` — aceptar
+   cualquiera bloquea el otro para siempre; un NPC de turn-in nuevo en
+   MarketA cierra la que se haya elegido (el turn-in matchea por `market_id`,
+   no por plantilla, así que sirve para cualquiera de las dos ramas).
+   **Fuera de alcance, anotado** (mismo criterio que P2-02/P2-07):
+   `CompletedMissions` no se serializa en el save v1 todavía — se resuelve en
+   el bump de schema que junte todos los componentes nuevos de Fase 2.
 
 ## Fase 1 — Vertical Slice — **COMPLETADA y validada** (histórico)
 
@@ -229,6 +247,13 @@ Cuando una entidad lleva `LocalToShip { ship_entity, local_position, local_orien
 5. Al salir (quitar `LocalToShip`), se bakea la pose mundial y la sim pasa a espacio mundo / GravityZone.
 
 ## Bitácora (más reciente arriba, una línea por tarea)
+- 2026-08-30 [P2-09] Misiones encadenadas: `MissionTemplate.requires_completed_id` +
+  `branch_group`; singleton `CompletedMissions` (done[] + branch_locked[]). Demo:
+  OreDelivery (id=0) desbloquea ColonistAid (id=2) / SecurityRun (id=3) en
+  MarketB, `branch_group=1` mutuamente excluyentes, más turn-in nuevo en
+  MarketA. Verificado: build limpio + `economy_test`/`ui_audio_test`/
+  `save_load_test` 12s headless sin crash ("Loaded 4 mission templates") +
+  `CSC_SAVE_SMOKE=1` PASS.
 - 2026-08-30 [P2-08] Economía dinámica: `EconomyClock` (tick de fondo cada 15s,
   no por frame) + `PriceEventQueue` (16 slots) + `Market.production_rate[N]`
   (data-driven, `rate_N` en markets.cfg). Un tick vacía la cola de eventos,

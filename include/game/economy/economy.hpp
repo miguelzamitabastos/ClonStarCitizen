@@ -33,6 +33,12 @@ inline constexpr i32 kScarcityDeltaMax   = -15;
 inline constexpr i32 kGlutDeltaMin       = 15;  ///< both positive: surplus → price down
 inline constexpr i32 kGlutDeltaMax       = 35;
 
+// --- P2-09: chained missions with simple branching ---------------------------
+/// Sentinel for MissionTemplate::requires_completed_id — id 0 is itself a
+/// valid template id (OreDelivery), so "no prerequisite" needs its own value.
+inline constexpr u32 kNoMissionRequirement = 0xFFFFFFFFu;
+inline constexpr u32 kMaxBranchGroups      = 8; ///< branch_group index range [1, kMaxBranchGroups)
+
 inline constexpr const char* kCommoditiesPath      = "assets/data/commodities.cfg";
 inline constexpr const char* kMarketsPath          = "assets/data/markets.cfg";
 inline constexpr const char* kMissionTemplatesPath = "assets/data/mission_templates.cfg";
@@ -88,6 +94,13 @@ struct MissionTemplate {
     f32         rep_delta     = 0.f;
     u32         from_market   = 0;
     u32         to_market     = 0;
+    /// P2-09: this template is only offerable once the template with this id
+    /// has been completed. kNoMissionRequirement = always offerable.
+    u32         requires_completed_id = kNoMissionRequirement;
+    /// P2-09: 0 = not part of a branch. Nonzero — accepting ANY template that
+    /// shares this group permanently locks out every other template in it
+    /// (the player's choice happens at accept time, not at completion).
+    u32         branch_group  = 0;
 };
 
 struct MissionTemplateTable {
@@ -113,6 +126,15 @@ struct MissionActive {
 struct MissionActivePool {
     memory::Pool<MissionActive, kMaxActiveMissions> pool{};
     u32                                             rng_state = 1;
+};
+
+/// P2-09: persistent record of which mission templates the player has ever
+/// completed (chained missions read this to unlock) and which branch groups
+/// are locked (set the instant a branch is accepted, not just completed — see
+/// MissionTemplate::branch_group). Fixed-size, indexed by template id.
+struct CompletedMissions {
+    bool done[kMaxMissionTemplates]{};
+    bool branch_locked[kMaxBranchGroups]{};
 };
 
 /// P2-08: a discrete price perturbation — pushed by other systems (mission
@@ -250,17 +272,31 @@ struct EconomyDebugSnapshot {
 [[nodiscard]] bool mission_generate_from_template(
     const MissionTemplate& tmpl, MissionActive& out, u32& rng_state);
 
+/// P2-09: true if `tmpl` can be accepted right now — its prerequisite (if any)
+/// is completed, and its branch (if any) hasn't already been locked out by
+/// accepting a sibling template in the same branch_group.
+[[nodiscard]] bool mission_template_available(
+    const MissionTemplate& tmpl, const CompletedMissions& completed);
+
+/// P2-09: on success, locks `template_id`'s branch_group (if nonzero) —
+/// permanent from this point, even before the mission completes.
 [[nodiscard]] bool mission_try_accept(
-    MissionActivePool& pool, const MissionTemplateTable& templates, u32 template_id);
+    MissionActivePool&        pool,
+    const MissionTemplateTable& templates,
+    u32                        template_id,
+    CompletedMissions&         completed);
 
 /// P2-08: `out_commodity_id`/`out_qty` report what a completed Delivery mission
 /// dropped off (0/0 for Visit missions or on failure) — the caller uses this to
 /// queue a PriceEvent (goods arriving in bulk nudge the local price).
+/// P2-09: also marks the template as done in `completed`, unlocking any
+/// template whose `requires_completed_id` points at it.
 [[nodiscard]] bool mission_try_complete_at_market(
     MissionActivePool&   pool,
     CargoHold&           hold,
     PlayerWallet&        wallet,
     FactionReputation&   rep,
+    CompletedMissions&   completed,
     u32                  market_id,
     u32&                 out_commodity_id,
     u32&                 out_qty);

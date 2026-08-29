@@ -419,8 +419,10 @@ bool setup_ui_audio_test(SceneContext& ctx)
             ctx.world->try_get_mut<game::economy::MissionActivePool>()) {
         const game::economy::MissionTemplateTable* templates =
             ctx.world->try_get<game::economy::MissionTemplateTable>();
-        if (templates != nullptr) {
-            (void)game::economy::mission_try_accept(*pool, *templates, 1u);
+        game::economy::CompletedMissions* completed =
+            ctx.world->try_get_mut<game::economy::CompletedMissions>();
+        if (templates != nullptr && completed != nullptr) {
+            (void)game::economy::mission_try_accept(*pool, *templates, 1u, *completed);
         }
     }
 
@@ -530,8 +532,10 @@ bool setup_save_load_test(SceneContext& ctx)
             ctx.world->try_get_mut<game::economy::MissionActivePool>()) {
         const game::economy::MissionTemplateTable* templates =
             ctx.world->try_get<game::economy::MissionTemplateTable>();
-        if (templates != nullptr) {
-            (void)game::economy::mission_try_accept(*pool, *templates, 1u);
+        game::economy::CompletedMissions* completed =
+            ctx.world->try_get_mut<game::economy::CompletedMissions>();
+        if (templates != nullptr && completed != nullptr) {
+            (void)game::economy::mission_try_accept(*pool, *templates, 1u, *completed);
         }
     }
 
