@@ -104,9 +104,10 @@ int main(int argc, char** argv)
     }
 
     platform::WindowDesc window_desc{};
-    window_desc.width  = app_config.window_width;
-    window_desc.height = app_config.window_height;
-    window_desc.title  = app_config.window_title;
+    window_desc.width                 = app_config.window_width;
+    window_desc.height                = app_config.window_height;
+    window_desc.title                 = app_config.window_title;
+    window_desc.borderless_fullscreen = app_config.borderless_fullscreen;
 
     platform::Window window{};
     if (!platform::window_create(window, window_desc)) {
@@ -115,6 +116,14 @@ int main(int argc, char** argv)
         memory::arena_destroy(asset_arena);
         memory::arena_destroy(level_arena);
         return 1;
+    }
+
+    if (app_config.borderless_fullscreen) {
+        log::log_info(
+            log::LogCategory::Core,
+            "Borderless fullscreen: %dx%d (primary monitor)",
+            window.width,
+            window.height);
     }
 
     input::InputSystem input_sys{};

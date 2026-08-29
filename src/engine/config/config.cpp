@@ -136,6 +136,19 @@ bool apply_kv(AppConfig& out, const char* key, const char* value)
         }
         return false;
     }
+    if (std::strcmp(key, "borderless_fullscreen") == 0) {
+        if (std::strcmp(value, "1") == 0 || std::strcmp(value, "true") == 0
+            || std::strcmp(value, "yes") == 0 || std::strcmp(value, "on") == 0) {
+            out.borderless_fullscreen = true;
+            return true;
+        }
+        if (std::strcmp(value, "0") == 0 || std::strcmp(value, "false") == 0
+            || std::strcmp(value, "no") == 0 || std::strcmp(value, "off") == 0) {
+            out.borderless_fullscreen = false;
+            return true;
+        }
+        return false;
+    }
     return false;
 }
 
@@ -233,6 +246,14 @@ void config_apply_argv(AppConfig& out, int argc, char** argv)
         }
         if (std::strcmp(arg, "--log-level") == 0 && i + 1 < argc && argv[i + 1] != nullptr) {
             apply_kv(out, "log_level", argv[++i]);
+            continue;
+        }
+        if (std::strcmp(arg, "--borderless") == 0) {
+            out.borderless_fullscreen = true;
+            continue;
+        }
+        if (std::strcmp(arg, "--windowed") == 0) {
+            out.borderless_fullscreen = false;
             continue;
         }
     }

@@ -39,6 +39,12 @@ struct InputSystem {
     double last_cursor_x   = 0.0;
     double last_cursor_y   = 0.0;
     bool   has_last_cursor = false;
+    /// True once the cursor has been warped to the window centre for the
+    /// current capture streak (WSLg-safe relative look, see input.cpp).
+    bool   capture_centered = false;
+    /// Frames to discard look deltas after (re)entering capture — absorbs the
+    /// warp echo / compositor spike some WSLg setups report on re-centre.
+    u8     suppress_look_frames = 0;
 
     bool prev_pressed[kActionCount]{};
     ActionState state{};
@@ -50,6 +56,12 @@ void input_set_default_bindings(InputSystem& sys);
 void input_set_config(InputSystem& sys, const InputConfig& config);
 
 /// Poll GLFW once per frame into `out` (and `sys.state`). No heap allocations.
+/// While the OS cursor is disabled (GLFW_CURSOR_DISABLED, set by whoever owns
+/// capture this frame — input_init, debug UI's F1 toggle, or the pause/menu
+/// cursor unlock in game::ui), look deltas are measured from the window centre
+/// and the cursor is warped back every frame, instead of trusting GLFW's raw
+/// virtual position — some WSLg compositors still clamp/reset it at the
+/// window edge, which otherwise stalls or spikes mouse look.
 void input_poll(InputSystem& sys, ActionState& out);
 
 [[nodiscard]] const ActionState& input_actions(const InputSystem& sys);

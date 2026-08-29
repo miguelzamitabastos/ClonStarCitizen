@@ -10,6 +10,8 @@ struct WindowDesc {
     i32         width  = 1280;
     i32         height = 720;
     const char* title  = "ClonStarCitizen";
+    /// Undecorated window covering the primary monitor (borderless fullscreen).
+    bool        borderless_fullscreen = false;
 };
 
 /// Plain window state — no OOP hierarchy; systems operate on this struct.

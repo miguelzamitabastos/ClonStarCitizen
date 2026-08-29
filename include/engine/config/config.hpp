@@ -21,6 +21,9 @@ struct AppConfig {
 
     char scene_name[kConfigStringBytes]{};
     log::LogLevel log_level = log::LogLevel::Info;
+    /// Undecorated window at primary monitor resolution — avoids WSLg/WM
+    /// decoration quirks with a bordered resizable window.
+    bool borderless_fullscreen = false;
 };
 
 void config_load_defaults(AppConfig& out);

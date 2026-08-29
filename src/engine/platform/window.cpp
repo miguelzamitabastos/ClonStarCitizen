@@ -33,16 +33,41 @@ void window_shutdown_subsystem()
 bool window_create(Window& window, const WindowDesc& desc)
 {
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
 
-    GLFWwindow* handle = glfwCreateWindow(desc.width, desc.height, desc.title, nullptr, nullptr);
+    i32 width  = desc.width;
+    i32 height = desc.height;
+
+    if (desc.borderless_fullscreen) {
+        // Undecorated + sized to the primary monitor, but still a normal
+        // windowed surface (not glfwCreateWindow's exclusive fullscreen
+        // monitor mode) — plays nicer with WSLg's window manager than a
+        // bordered resizable window, and avoids exclusive-fullscreen mode
+        // switches Vulkan WSI doesn't need here.
+        glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
+        glfwWindowHint(GLFW_RESIZABLE, GLFW_FALSE);
+        if (GLFWmonitor* monitor = glfwGetPrimaryMonitor(); monitor != nullptr) {
+            if (const GLFWvidmode* mode = glfwGetVideoMode(monitor); mode != nullptr) {
+                width  = mode->width;
+                height = mode->height;
+            }
+        }
+    } else {
+        glfwWindowHint(GLFW_DECORATED, GLFW_TRUE);
+        glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
+    }
+
+    GLFWwindow* handle = glfwCreateWindow(width, height, desc.title, nullptr, nullptr);
     if (handle == nullptr) {
         return false;
     }
 
+    if (desc.borderless_fullscreen) {
+        glfwSetWindowPos(handle, 0, 0);
+    }
+
     window.handle              = handle;
-    window.width               = desc.width;
-    window.height              = desc.height;
+    window.width               = width;
+    window.height              = height;
     window.framebuffer_resized = false;
 
     glfwSetWindowUserPointer(handle, &window);

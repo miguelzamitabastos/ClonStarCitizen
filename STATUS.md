@@ -189,6 +189,22 @@ Cuando una entidad lleva `LocalToShip { ship_entity, local_position, local_orien
 5. Al salir (quitar `LocalToShip`), se bakea la pose mundial y la sim pasa a espacio mundo / GravityZone.
 
 ## Bitácora (más reciente arriba, una línea por tarea)
+- 2026-08-29 [WSL] Captura de ratón robustecida (`engine/input/input.cpp`): mientras
+  `GLFW_CURSOR_DISABLED`, el look se mide recentrando el cursor a mitad de ventana cada
+  frame (en vez de fiarse del delta virtual crudo de GLFW) + 2 frames de guarda tras
+  cada (re)captura — algunos compositores WSLg clampan/reenvían la posición al borde de
+  ventana bajo cursor disabled, lo que antes cortaba o disparaba el look. No toca quién
+  decide activar/desactivar la captura (F1 debug UI, pausa/menús) — solo lee el modo
+  GLFW vigente. Añadido `borderless_fullscreen` (config + ventana sin decorar a
+  resolución de monitor, activado por defecto en `default.cfg` de esta máquina;
+  `--windowed` para desactivar). Verificado con build limpio (0 warnings propios) +
+  smoke test headless (Xvfb/lavapipe) de `crew_turret_test` y `npc_combat_test`.
+- 2026-08-29 [reconciliación] Este checkout (WSL, RTX 5060 Ti) había hecho en paralelo
+  una implementación propia y duplicada de P2-01..05 sin saber que Cursor Cloud ya
+  había completado P2-01..06+P2-11 y fusionado a `main` (PR #6). Se descartó la
+  duplicada (queda en la rama local `old-local-p2-duplicate` por si hace falta
+  recuperar algo puntual) y se adoptó la de `main` como única fuente de verdad; solo
+  se rescató el fix de captura de ratón/WSL de arriba, que no solapaba con nada.
 - 2026-08-10 [P2-06] IA combate a pie: NpcCombatant (actuación) sobre AiAgent P2-11 (decisión).
   Patrol=PatrolRoute waypoints, Alert=encara, Combat=avanza hasta preferred_range + dispara
   (cadencia EquippedItem, roll de precisión CombatRng, mismo DamageEvent que el jugador),

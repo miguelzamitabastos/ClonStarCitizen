@@ -44,6 +44,15 @@ void add_binding(InputSystem& sys, BindingDevice device, i32 code, Action action
     return false;
 }
 
+[[nodiscard]] f32 clampf(f32 v, f32 lo, f32 hi)
+{
+    return v < lo ? lo : (v > hi ? hi : v);
+}
+
+/// Max look delta (px) accepted from a single recentred sample — guards
+/// against a stray large jump instead of clamping legitimate fast turns away.
+constexpr f32 kMaxCaptureLookDeltaPx = 200.f;
+
 }  // namespace
 
 void input_set_default_bindings(InputSystem& sys)
@@ -91,10 +100,12 @@ void input_set_config(InputSystem& sys, const InputConfig& config)
 
 void input_init(InputSystem& sys, GLFWwindow* window)
 {
-    sys.window           = window;
-    sys.has_last_cursor  = false;
-    sys.last_cursor_x    = 0.0;
-    sys.last_cursor_y    = 0.0;
+    sys.window               = window;
+    sys.has_last_cursor      = false;
+    sys.capture_centered     = false;
+    sys.suppress_look_frames = 0;
+    sys.last_cursor_x        = 0.0;
+    sys.last_cursor_y        = 0.0;
     clear_action_state(sys.state);
     for (u16 i = 0; i < kActionCount; ++i) {
         sys.prev_pressed[i] = false;
@@ -118,9 +129,11 @@ void input_shutdown(InputSystem& sys)
             glfwSetInputMode(sys.window, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
         }
     }
-    sys.window          = nullptr;
-    sys.binding_count   = 0;
-    sys.has_last_cursor = false;
+    sys.window               = nullptr;
+    sys.binding_count        = 0;
+    sys.has_last_cursor      = false;
+    sys.capture_centered     = false;
+    sys.suppress_look_frames = 0;
     clear_action_state(sys.state);
 }
 
@@ -173,18 +186,65 @@ void input_poll(InputSystem& sys, ActionState& out)
     out.axes[static_cast<u16>(ActionAxis::MoveZ)] = move_z;
 
     // Mouse look deltas (pixels). Sensitivity applied by CameraControlSystem.
+    //
+    // Whoever owns cursor capture this frame (input_init's initial disable,
+    // debug UI's F1 toggle, or game::ui's pause/menu unlock) only ever flips
+    // GLFW_CURSOR between DISABLED/NORMAL — input_poll doesn't need to be told
+    // who did it, it just reads the current mode. While disabled, deltas are
+    // measured from the window centre and the cursor is warped back every
+    // frame instead of trusting GLFW's raw virtual position: some WSLg
+    // compositors still clamp the reported position at the window edge under
+    // GLFW_CURSOR_DISABLED, which otherwise stalls look at the edge or spikes
+    // once the OS cursor "catches up" after leaving the window bounds.
     double cursor_x = 0.0;
     double cursor_y = 0.0;
     glfwGetCursorPos(win, &cursor_x, &cursor_y);
-    if (sys.has_last_cursor) {
-        out.axes[static_cast<u16>(ActionAxis::LookX)] =
-            static_cast<f32>(cursor_x - sys.last_cursor_x);
-        out.axes[static_cast<u16>(ActionAxis::LookY)] =
-            static_cast<f32>(cursor_y - sys.last_cursor_y);
+
+    const bool cursor_disabled = glfwGetInputMode(win, GLFW_CURSOR) == GLFW_CURSOR_DISABLED;
+
+    if (!cursor_disabled) {
+        // Cursor free (UI/menu): no relative look, and the next capture
+        // streak must re-centre from scratch rather than reuse a stale delta.
+        sys.capture_centered     = false;
+        sys.suppress_look_frames = 0;
+        sys.has_last_cursor      = false;
+    } else {
+        int win_w = 0;
+        int win_h = 0;
+        glfwGetWindowSize(win, &win_w, &win_h);
+
+        if (win_w <= 0 || win_h <= 0) {
+            sys.capture_centered = false;
+        } else {
+            const double cx = static_cast<double>(win_w) * 0.5;
+            const double cy = static_cast<double>(win_h) * 0.5;
+
+            if (!sys.capture_centered) {
+                // First frame of this capture streak: snap to centre without
+                // emitting a delta (the jump from wherever the cursor was is
+                // not a look input) and swallow the next couple of frames —
+                // the warp itself can echo back as a spurious sample.
+                glfwSetCursorPos(win, cx, cy);
+                sys.capture_centered     = true;
+                sys.suppress_look_frames = 2;
+            } else if (sys.suppress_look_frames > 0) {
+                --sys.suppress_look_frames;
+                glfwSetCursorPos(win, cx, cy);
+            } else {
+                const f32 look_x = clampf(
+                    static_cast<f32>(cursor_x - cx), -kMaxCaptureLookDeltaPx, kMaxCaptureLookDeltaPx);
+                const f32 look_y = clampf(
+                    static_cast<f32>(cursor_y - cy), -kMaxCaptureLookDeltaPx, kMaxCaptureLookDeltaPx);
+                out.axes[static_cast<u16>(ActionAxis::LookX)] = look_x;
+                out.axes[static_cast<u16>(ActionAxis::LookY)] = look_y;
+                glfwSetCursorPos(win, cx, cy);
+            }
+        }
+        sys.has_last_cursor = false; // recenter path doesn't use last_cursor_*
     }
-    sys.last_cursor_x   = cursor_x;
-    sys.last_cursor_y   = cursor_y;
-    sys.has_last_cursor = true;
+
+    sys.last_cursor_x = cursor_x;
+    sys.last_cursor_y = cursor_y;
 
     sys.state = out;
 }
