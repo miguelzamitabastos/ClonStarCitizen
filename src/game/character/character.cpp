@@ -30,6 +30,22 @@ namespace {
     return v * (1.f / std::sqrt(len2));
 }
 
+/// P2-07: which body zone a hit lands on, rolled at damage time — same
+/// "no real geometry, deterministic LCG roll" approach as flight.cpp's
+/// roll_hit_subsystem (P2-02): kHeadHitChance / kLimbHitChance, rest Torso.
+[[nodiscard]] combat::BodyZone roll_hit_zone(u32& rng_state)
+{
+    const u32 roll = combat::rng_next(rng_state) >> 8; // drop low-quality LCG bits
+    const f32 unit = static_cast<f32>(roll % 10000u) / 10000.f;
+    if (unit < kHeadHitChance) {
+        return combat::BodyZone::Head;
+    }
+    if (unit < kHeadHitChance + kLimbHitChance) {
+        return combat::BodyZone::Limb;
+    }
+    return combat::BodyZone::Torso;
+}
+
 [[nodiscard]] glm::vec3 forward_from_yaw_pitch(f32 yaw, f32 pitch)
 {
     const f32 cy = std::cos(yaw);
@@ -673,8 +689,9 @@ void step_npc_combat(flecs::world& world, f32 dt)
                     static_cast<f32>(combat::rng_next(rng->state) >> 8)
                     * (1.f / 16777216.f);
                 if (roll < npc.accuracy) {
-                    (void)dmg_q->push(
-                        combat::DamageEvent{agent->target, e.id(), gun.damage});
+                    combat::DamageEvent ev{agent->target, e.id(), gun.damage};
+                    ev.zone = roll_hit_zone(rng->state); // P2-07
+                    (void)dmg_q->push(ev);
                 }
             }
             break;
@@ -868,6 +885,7 @@ void step_fps_combat(flecs::world& world, f32 dt, const input::ActionState* acti
     HealthTarget targets[kMaxHealthTargets]{};
     const u32    target_count = collect_health_targets(world, targets, kMaxHealthTargets);
     combat::DamageEventQueue* dmg_q = world.try_get_mut<combat::DamageEventQueue>();
+    combat::CombatRng*        rng   = world.try_get_mut<combat::CombatRng>();
 
     ecs::Camera3D cam{};
     const bool    have_cam = ecs::world_try_get_primary_camera(world, cam);
@@ -897,7 +915,11 @@ void step_fps_combat(flecs::world& world, f32 dt, const input::ActionState* acti
         const flecs::entity_t hit =
             raycast_health(targets, target_count, e.id(), cam_origin, cam_dir, kFpsWeaponRange);
         if (hit != 0 && dmg_q != nullptr) {
-            (void)dmg_q->push(combat::DamageEvent{hit, e.id(), item.damage});
+            combat::DamageEvent ev{hit, e.id(), item.damage};
+            if (rng != nullptr) {
+                ev.zone = roll_hit_zone(rng->state); // P2-07
+            }
+            (void)dmg_q->push(ev);
         }
     });
 }
@@ -991,6 +1013,78 @@ void update_on_foot_camera(flecs::world& world)
     });
 }
 
+/// P2-07: ticks RespawnTimer down for the (only ever the player) dead entity
+/// that carries one; on reaching zero, restores Health, clears CharacterDead/
+/// RespawnTimer, and teleports back to SpawnPoint (world or LocalToShip,
+/// mirroring spawn_player_character's own placement logic).
+void step_death_and_respawn(flecs::world& world, f32 dt)
+{
+    flecs::entity_t to_respawn[kMaxHealthTargets]{};
+    u32             respawn_count = 0;
+
+    world.each([&](flecs::entity e, RespawnTimer& timer) {
+        if (!e.has<CharacterDead>()) {
+            // Defensive: never leave a stray timer on a living entity.
+            e.remove<RespawnTimer>();
+            return;
+        }
+        timer.remaining -= dt;
+        if (timer.remaining <= 0.f && respawn_count < kMaxHealthTargets) {
+            to_respawn[respawn_count++] = e.id();
+        }
+    });
+
+    for (u32 i = 0; i < respawn_count; ++i) {
+        flecs::entity e = world.entity(to_respawn[i]);
+        if (!e.is_alive()) {
+            continue;
+        }
+
+        if (Health* hp = e.try_get_mut<Health>()) {
+            hp->hp = hp->max_hp;
+        }
+        if (CharacterController* cc = e.try_get_mut<CharacterController>()) {
+            cc->velocity = {};
+            cc->grounded = true;
+        }
+
+        if (const SpawnPoint* sp = e.try_get<SpawnPoint>()) {
+            if (sp->ship_or_zero != 0) {
+                flight::RigidBody6DOF ship_rb{};
+                LocalToShip local{};
+                local.ship_entity       = sp->ship_or_zero;
+                local.local_position    = sp->local_position;
+                local.local_orientation = glm::quat{1.f, 0.f, 0.f, 0.f};
+                e.set<LocalToShip>(local);
+                if (try_get_ship_rb(world, sp->ship_or_zero, ship_rb)) {
+                    glm::vec3 wpos{};
+                    glm::quat wori{};
+                    world_from_local(
+                        ship_rb, local.local_position, local.local_orientation, wpos, wori);
+                    write_world_pose(e, wpos, wori, true);
+                    write_world_pose(e, wpos, wori, false);
+                }
+            } else {
+                e.remove<LocalToShip>();
+                e.set<ecs::Position>({sp->position.x, sp->position.y, sp->position.z});
+                e.set<ecs::PreviousPosition>(
+                    {sp->position.x, sp->position.y, sp->position.z});
+            }
+        }
+
+        if (!e.has<ecs::InstanceTag>()) {
+            e.add<ecs::InstanceTag>(); // cleanup_dead_characters stripped it on death
+        }
+
+        e.remove<CharacterDead>();
+        e.remove<RespawnTimer>();
+
+        log::log_info(
+            log::LogCategory::Core, "Player respawned (entity=%llu)",
+            static_cast<unsigned long long>(to_respawn[i]));
+    }
+}
+
 void cleanup_dead_characters(flecs::world& world)
 {
     flecs::entity_t strip[kMaxHealthTargets]{};
@@ -1038,6 +1132,7 @@ void fixed_step(flecs::world& world, f32 dt)
         log::log_info(log::LogCategory::Core, "Turret seat: → OnFoot");
     }
 
+    step_death_and_respawn(world, dt); // P2-07: tick respawn timer first
     step_npc_combat(world, dt); // P2-06: AiAgent decision → wish + trigger
     step_locomotion(world, dt, actions);
     update_interaction_focus(world);
@@ -1158,11 +1253,18 @@ flecs::entity spawn_player_character(
     (void)inventory_add(inv, kItemRifle, 1u);
     (void)inventory_add(inv, kItemMedkit, 1u);
 
+    // P2-07: remember where/how to restore this player on respawn.
+    SpawnPoint spawn_point{};
+    spawn_point.position       = spawn_world;
+    spawn_point.ship_or_zero   = ship_or_zero;
+    spawn_point.local_position = world_or_local_pos;
+
     flecs::entity e = world.entity("PlayerCharacter")
                           .set<CharacterController>(cc)
                           .set<Health>(hp)
                           .set<EquippedItem>(gun)
                           .set<Inventory>(inv)
+                          .set<SpawnPoint>(spawn_point)
                           .set<ecs::Position>(
                               {spawn_world.x, spawn_world.y, spawn_world.z})
                           .set<ecs::PreviousPosition>(
@@ -1339,10 +1441,12 @@ flecs::entity spawn_item_pickup(
 
     InteractablePrompt pr{};
     char label[sizeof(pr.label)]{};
+    // Precision cap on %s: name + " x" + a u32's worth of digits must fit
+    // `label` (== InteractablePrompt::label, 32 bytes) with room to spare.
     std::snprintf(
         label,
         sizeof(label),
-        "Coger %s x%u",
+        "Coger %.16s x%u",
         (def != nullptr) ? def->name : "item",
         qty);
     copy_prompt(pr.label, sizeof(pr.label), label);
@@ -1547,6 +1651,27 @@ void fill_player_telemetry(
         } else {
             const SampledGravity g = sample_gravity(world, glm::vec3{p.x, p.y, p.z});
             eva = !g.in_zone || g.magnitude < 0.05f;
+        }
+    });
+}
+
+void fill_death_telemetry(flecs::world& world, DeathTelemetry& out)
+{
+    out.dead       = false;
+    out.respawn_in = 0.f;
+
+    // Query on Health (non-empty) and filter tags via has<>() instead of
+    // fetching CharacterDead/PlayerCharacter by reference — both are empty
+    // structs, and flecs registers those as tags that cannot be bound as a
+    // query term reference in each() (crashes at field-resolve time; see the
+    // CoverPoint comment above for the same gotcha hit earlier in this file).
+    world.each([&](flecs::entity e, const Health&) {
+        if (out.dead || !e.has<PlayerCharacter>() || !e.has<CharacterDead>()) {
+            return;
+        }
+        out.dead = true;
+        if (const RespawnTimer* timer = e.try_get<RespawnTimer>()) {
+            out.respawn_in = std::max(0.f, timer->remaining);
         }
     });
 }

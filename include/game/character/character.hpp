@@ -29,6 +29,11 @@ inline constexpr u32 kMaxInteractables     = 32;
 inline constexpr u32 kMaxGravityZones      = 16;
 inline constexpr u32 kInteractEventCapacity = 16;
 
+// --- P2-07: zone damage + death/respawn ---------------------------------------
+inline constexpr f32 kRespawnDelaySeconds = 3.f;
+inline constexpr f32 kHeadHitChance       = 0.12f; ///< roll_hit_zone: P(Head)
+inline constexpr f32 kLimbHitChance       = 0.20f; ///< roll_hit_zone: P(Limb); rest Torso
+
 /// Forward = local -Z (matches ship / camera convention).
 inline constexpr glm::vec3 kCharForward{0.f, 0.f, -1.f};
 
@@ -50,6 +55,22 @@ struct CharacterController {
 struct Health {
     f32 max_hp = 100.f;
     f32 hp     = 100.f;
+};
+
+/// P2-07: where/how to restore a player on respawn — captured once at
+/// spawn_player_character time. `ship_or_zero == 0` means world space
+/// (`position`); otherwise `local_position` in that ship's LocalToShip frame.
+struct SpawnPoint {
+    glm::vec3       position{0.f};
+    flecs::entity_t ship_or_zero  = 0;
+    glm::vec3       local_position{0.f};
+};
+
+/// P2-07: counts down while CharacterDead is set on the player; on reaching
+/// zero, fixed_step respawns at SpawnPoint and clears both tags. Only ever
+/// added to the player — NPCs stay dead (no respawn cycle for them).
+struct RespawnTimer {
+    f32 remaining = kRespawnDelaySeconds;
 };
 
 struct EquippedItem {
@@ -320,6 +341,14 @@ struct InventoryTelemetry {
 };
 
 void fill_inventory_telemetry(flecs::world& world, InventoryTelemetry& out);
+
+/// P2-07: HUD snapshot of the player's death/respawn state.
+struct DeathTelemetry {
+    bool dead       = false;
+    f32  respawn_in = 0.f;
+};
+
+void fill_death_telemetry(flecs::world& world, DeathTelemetry& out);
 
 /// Fill debug overlay fields from the first PlayerCharacter (if any).
 void fill_player_telemetry(

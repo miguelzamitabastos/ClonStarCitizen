@@ -563,7 +563,10 @@ void apply_damage_events(flecs::world& world)
 
         if (remaining > 0.f && !target.has<character::CharacterDead>()) {
             if (character::Health* hp = target.try_get_mut<character::Health>()) {
-                hp->hp = std::max(0.f, hp->hp - remaining);
+                // P2-07: zone multiplier (Head/Limb/Torso) — meaningless for
+                // ships, only ever applied here against character::Health.
+                const f32 zoned = remaining * combat::body_zone_damage_multiplier(ev.zone);
+                hp->hp = std::max(0.f, hp->hp - zoned);
                 if (hp->hp <= 0.f && dead_count < character::kMaxHealthTargets) {
                     newly_dead[dead_count++] = target.id();
                 }
@@ -587,6 +590,10 @@ void apply_damage_events(flecs::world& world)
         flecs::entity e = world.entity(newly_dead[i]);
         if (e.is_alive() && !e.has<character::CharacterDead>()) {
             e.add<character::CharacterDead>();
+            // P2-07: only the player respawns — NPCs stay dead.
+            if (e.has<character::PlayerCharacter>()) {
+                e.set<character::RespawnTimer>({character::kRespawnDelaySeconds});
+            }
         }
     }
 }

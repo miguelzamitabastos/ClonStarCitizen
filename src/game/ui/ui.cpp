@@ -149,6 +149,22 @@ void draw_on_foot_hud(flecs::world& world)
         | ImGuiWindowFlags_NoTitleBar;
     if (ImGui::Begin("##OnFootHUD", nullptr, flags)) {
         ImGui::TextUnformatted("ON FOOT");
+
+        // P2-07: death/respawn banner — shown instead of the usual readouts
+        // while the player is waiting to respawn.
+        character::DeathTelemetry death{};
+        character::fill_death_telemetry(world, death);
+        if (death.dead) {
+            std::snprintf(
+                line,
+                sizeof(line),
+                "YOU DIED — respawning in %.1fs",
+                static_cast<double>(death.respawn_in));
+            ImGui::TextUnformatted(line);
+            ImGui::End();
+            return;
+        }
+
         std::snprintf(
             line,
             sizeof(line),

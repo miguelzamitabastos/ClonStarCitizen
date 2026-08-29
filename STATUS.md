@@ -10,10 +10,10 @@ Fase 1 validada físicamente por el usuario (2026-08-10) — apertura de Fase 2.
   - [x] P2-02 Daño por componente (ENG/SHD/WPN/SEN) vía DamageEvent.subsystem
   - [x] P2-03 Torretas giratorias (IA o jugador) con arco de disparo
   - [x] P2-04 Modelo de vuelo atmosférico vs vacío (arrastre + sustentación)
-- A pie (P2-05..07):           [##] 2/3
+- A pie (P2-05..07):           [###] 3/3 — COMPLETADO
   - [x] P2-05 Inventario completo (slots equipo, recogibles, uso de items)
   - [x] P2-06 IA combate a pie (detección, cobertura, disparo) sobre P2-11
-  - [ ] P2-07 Daño por zona (torso/extremidad) + muerte/reaparición jugador
+  - [x] P2-07 Daño por zona (torso/extremidad) + muerte/reaparición jugador
 - Economía y misiones (P2-08..10): [.] 0/3
   - [ ] P2-08 Simulación económica dinámica (producción/consumo, eventos de precio)
   - [ ] P2-09 Misiones encadenadas con ramificación simple
@@ -35,7 +35,30 @@ Fase 1 validada físicamente por el usuario (2026-08-10) — apertura de Fase 2.
    para detección IA (P2-11) y HUD. HUD vuelo muestra ENG/SGN/WPN/SEN u OFFLINE.
    El formato de guardado v1 NO serializa subsistemas todavía (decisión: bump de
    schema al cerrar más componentes de Fase 2, una sola migración).
-2. **P2-11 IA compartida:** `src/game/ai/` es la ÚNICA máquina de decisión
+2. **P2-07 zona + muerte/reaparición:** `DamageEvent` gana campo `zone`
+   (enum `combat::BodyZone`: Torso/Head/Limb, `Torso` = comportamiento previo sin
+   cambios) — mismo patrón que `subsystem` (P2-02): rolado por `CombatRng` al
+   disparar (`roll_hit_zone`, no geometría de cápsula real), consumido en
+   `apply_damage_events` (flight.cpp) como multiplicador sobre `character::Health`
+   (Head ×2.5, Limb ×0.5, Torso ×1 — sin efecto sobre naves). Muerte/reaparición
+   **solo del jugador** (los NPCs se quedan muertos, sin ciclo): `SpawnPoint`
+   capturado en `spawn_player_character` (posición mundo o local a nave);
+   `RespawnTimer` (3s) añadido junto a `CharacterDead` en `apply_damage_events`
+   cuando el objetivo es el jugador; `step_death_and_respawn` (primer paso de
+   `character::fixed_step`) cuenta atrás y restaura HP máxima + posición/LocalToShip
+   + `InstanceTag` al llegar a 0. HUD on-foot muestra "YOU DIED — respawning in Xs"
+   mientras dura. **Gotcha real (crash) durante la verificación**: `world.each()`
+   con un tag vacío (`CharacterDead`, `PlayerCharacter`) pedido **por referencia**
+   como término de query revienta flecs (`entity_index.c` assert) — ya documentado
+   para `CoverPoint` en este mismo archivo, repetido aquí antes de arreglarlo:
+   la consulta de telemetría de muerte usa `Health` (no vacío) + `.has<>()` en el
+   cuerpo, nunca el tag como parámetro. **Fuera de alcance, anotado**: `CharacterDead`/
+   `RespawnTimer`/`SpawnPoint` no se serializan en el save v1 — cargar una partida
+   guardada justo durante la ventana de "muerto, esperando respawn" dejaría
+   `Health.hp=0` sin `CharacterDead` (bug latente de baja probabilidad, mismo
+   criterio que la nota de subsistemas de la decisión 1: se resuelve en el bump de
+   schema que junte todos los componentes nuevos de Fase 2, no antes).
+3. **P2-11 IA compartida:** `src/game/ai/` es la ÚNICA máquina de decisión
    (`AiAgent` FSM Patrol/Alert/Combat/Flee + `select_target` + hostilidad).
    Decisión y actuación separadas: torretas/NPCs/naves solo LEEN `AiAgent.state`
    y `AiAgent.target` en sus sistemas. Facciones: 0=Comercio, 1=Seguridad,
@@ -189,6 +212,13 @@ Cuando una entidad lleva `LocalToShip { ship_entity, local_position, local_orien
 5. Al salir (quitar `LocalToShip`), se bakea la pose mundial y la sim pasa a espacio mundo / GravityZone.
 
 ## Bitácora (más reciente arriba, una línea por tarea)
+- 2026-08-29 [P2-07] Daño por zona (`combat::BodyZone` Torso/Head/Limb, rolado por
+  CombatRng al disparar, ×2.5/×0.5/×1 sobre Health) + ciclo de muerte/reaparición del
+  jugador (`SpawnPoint`+`RespawnTimer`, 3s, restaura HP/posición/InstanceTag). Fase 2
+  bloque "A pie" COMPLETADO (P2-05..07 3/3). Verificado con `npc_combat_test` 45s
+  headless: 4 ciclos muerte→reaparición sin crash, más regresión de crew_turret_test/
+  on_foot_test/flight_test/economy_test. Crash real encontrado y corregido durante la
+  verificación (`world.each()` con tag vacío por referencia — ver decisión 2 arriba).
 - 2026-08-29 [WSL] Captura de ratón robustecida (`engine/input/input.cpp`): mientras
   `GLFW_CURSOR_DISABLED`, el look se mide recentrando el cursor a mitad de ventana cada
   frame (en vez de fiarse del delta virtual crudo de GLFW) + 2 frames de guarda tras

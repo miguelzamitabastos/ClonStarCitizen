@@ -25,13 +25,40 @@ inline constexpr u32 kSubsystemCount = 4; ///< Engines..Sensors (excludes None)
     return static_cast<u32>(s) - 1u;
 }
 
+/// P2-07: on-foot hit zone addressed by a DamageEvent against a character.
+/// Meaningless (ignored) for ship targets — ships key off `subsystem` instead.
+enum class BodyZone : u8 {
+    Torso = 0, ///< default — no special multiplier
+    Head  = 1,
+    Limb  = 2,
+};
+
+/// Zone damage multipliers applied when a DamageEvent lands on a
+/// `character::Health` target (apply_damage_events, flight.cpp). Not simulated
+/// via real capsule geometry — same "RNG roll at damage time" approach already
+/// used for ship subsystem targeting (P2-02, see `roll_hit_subsystem`).
+[[nodiscard]] inline f32 body_zone_damage_multiplier(BodyZone zone)
+{
+    switch (zone) {
+    case BodyZone::Head:
+        return 2.5f;
+    case BodyZone::Limb:
+        return 0.5f;
+    case BodyZone::Torso:
+        return 1.f;
+    }
+    return 1.f;
+}
+
 /// Instantaneous damage request — consumed from a fixed ring (no heap).
 /// P2-02: `subsystem` extends the same event (no per-component event types).
+/// P2-07: `zone` does the same for character (on-foot) targets.
 struct DamageEvent {
     flecs::entity_t target    = 0;
     flecs::entity_t source    = 0;
     f32             amount    = 0.f;
     Subsystem       subsystem = Subsystem::None;
+    BodyZone        zone      = BodyZone::Torso;
 };
 
 /// Flecs singleton: deterministic LCG used by combat hit-location rolls (no heap).
