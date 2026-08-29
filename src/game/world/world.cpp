@@ -2,6 +2,7 @@
 
 #include "engine/ecs/world.hpp"
 #include "engine/log/log.hpp"
+#include "game/ai/ai.hpp"
 #include "game/character/character.hpp"
 #include "game/flight/flight.hpp"
 
@@ -599,6 +600,7 @@ flecs::entity spawn_universe_test(flecs::world& world, const StarSystemData& dat
 
     // Player ship near station, facing -Z toward landing zone (open-space stretch).
     flight::spawn_projectile_pool(world);
+    ai::spawn_encounter_pool(world); // P2-12: dormant until proximity activates them
     flecs::entity ship =
         flight::spawn_player_ship(world, station_pos + glm::vec3{0.f, 5.f, 25.f});
 

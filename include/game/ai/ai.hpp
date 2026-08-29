@@ -73,6 +73,35 @@ struct TargetCandidate {
     bool            player_side = true; ///< jugador o aliado del jugador
 };
 
+// --- P2-12: encuentros aleatorios (Pool, sin instanciar fuera de él) ----------
+// Reutiliza P2-03 (torreta IA, `requires_gunner=false`) tal cual — la nave en
+// sí gana AiAgent (decisión/telemetría vía este mismo framework) pero SIN
+// actuación de movimiento propia todavía: la torreta es lo que de verdad
+// amenaza al jugador. Movimiento de nave NPC queda como hueco documentado
+// (STATUS.md) para una fase futura, no bifurcado aquí con lógica a medias.
+inline constexpr u32 kMaxEncounterSlots     = 4;
+inline constexpr f32 kEncounterCheckSeconds = 10.f;  ///< cadencia de fondo, no por frame
+inline constexpr f32 kEncounterSpawnChance  = 0.35f; ///< por check, solo si hay slot libre
+inline constexpr f32 kEncounterMinSpawnDist = 150.f;
+inline constexpr f32 kEncounterMaxSpawnDist = 300.f;
+inline constexpr f32 kEncounterDespawnDist  = 450.f;
+
+/// Un par nave+torreta pre-creado — activo (visible, con IA, hostil según la
+/// facción rolada) o inactivo (invisible, inerte), pero nunca creado ni
+/// destruido tras la carga de nivel (restricción del Pool, ver roadmap).
+struct EncounterSlot {
+    flecs::entity_t ship   = 0;
+    flecs::entity_t turret = 0;
+    bool            active = false;
+};
+
+/// Singleton flecs: pool fijo de slots de encuentro + su propio estado LCG.
+struct EncounterPool {
+    EncounterSlot slots[kMaxEncounterSlots]{};
+    u32           rng_state   = 424242u;
+    f32           check_accum = 0.f;
+};
+
 // --- Pure decision helpers -------------------------------------------------------
 
 /// Hostilidad de una facción hacia el JUGADOR según reputación (DoD Fase 2:
@@ -114,6 +143,11 @@ void fixed_step(flecs::world& world, f32 dt);
 /// NPCs con FactionMember) en un buffer fijo. Devuelve nº escrito.
 [[nodiscard]] u32 collect_target_candidates(
     flecs::world& world, TargetCandidate* out, u32 capacity);
+
+/// P2-12: pre-crea kMaxEncounterSlots pares nave+torreta inactivos (carga de
+/// nivel, igual que flight::spawn_projectile_pool) — sin InstanceTag/AiAgent
+/// hasta que fixed_step los active por proximidad al jugador.
+void spawn_encounter_pool(flecs::world& world);
 
 /// Telemetría debug: nº agentes por estado (HUD / overlay).
 struct AiTelemetry {

@@ -18,9 +18,9 @@ Fase 1 validada físicamente por el usuario (2026-08-10) — apertura de Fase 2.
   - [x] P2-08 Simulación económica dinámica (producción/consumo, eventos de precio)
   - [x] P2-09 Misiones encadenadas con ramificación simple
   - [x] P2-10 Misiones combate/escolta reutilizando IA P2-03/P2-06
-- IA y facciones (P2-11..12):  [#] 1/2
+- IA y facciones (P2-11..12):  [##] 2/2 — COMPLETADO
   - [x] P2-11 Framework de IA compartido (FSM patrulla/alerta/combate/huida + hostilidad por reputación)
-  - [ ] P2-12 Encuentros aleatorios por proximidad desde Pool
+  - [x] P2-12 Encuentros aleatorios por proximidad desde Pool
 - Mundo (P2-13):               [.] 0/1
   - [ ] P2-13 Más localizaciones en el sistema fijo (esquema P1D-02)
 
@@ -133,6 +133,29 @@ Fase 1 validada físicamente por el usuario (2026-08-10) — apertura de Fase 2.
    Los tres solo salieron a la luz forzando manualmente un accept + spawn de
    escolta en una sesión headless (nada dispara Combat/Escort sin interacción
    real del jugador) — ver bitácora para el procedimiento de verificación.
+7. **P2-12 encuentros aleatorios:** `ai::EncounterPool` (`src/game/ai/`, no
+   `src/game/world/` — la tarea vive bajo "IA y facciones" en el roadmap) —
+   4 pares nave+torreta (`flight::spawn_npc_ship` + `spawn_turret`,
+   `requires_gunner=false`) **pre-creados una sola vez** en `universe_test`
+   (`ai::spawn_encounter_pool`, junto a `spawn_projectile_pool`) e
+   inmediatamente dejados inertes (sin `InstanceTag`/`AiAgent` — invisibles,
+   fuera de la colección de candidatos de IA). Cada 10s de tiempo de juego
+   (`kEncounterCheckSeconds`, cadencia de fondo tipo P2-08, no por frame),
+   `ai::fixed_step` rueda 35% de probabilidad; si hay slot libre, activa uno
+   a 150–300m del jugador con facción pirata o patrulla de Seguridad
+   (50/50). Se desactiva (vuelve al pool, HP/escudo/subsistemas restaurados)
+   si su nave muere o se aleja >450m del jugador — **nunca se crea ni destruye
+   una entidad fuera de las 4 pre-creadas**, tal como exige la nota de
+   arquitectura del roadmap.
+   **Simplificación deliberada, anotada:** la nave del encuentro gana
+   `AiAgent` propio (decisión/telemetría vía el mismo framework) pero **no
+   tiene actuación de movimiento** — no persigue ni maniobra. Quien de verdad
+   amenaza al jugador es su torreta (P2-03 reutilizado tal cual, ya probado
+   en `crew_turret_test`). Añadir movimiento real a naves NPC es un hueco
+   documentado para una fase futura, no una IA a medias bifurcada aquí.
+   Verificado en `universe_test` 65s headless: 2 encuentros de piratas
+   activados sin crash, cero regresión en las 7 escenas restantes (todas
+   corren `ai::fixed_step`).
 
 ## Fase 1 — Vertical Slice — **COMPLETADA y validada** (histórico)
 
@@ -277,6 +300,14 @@ Cuando una entidad lleva `LocalToShip { ship_entity, local_position, local_orien
 5. Al salir (quitar `LocalToShip`), se bakea la pose mundial y la sim pasa a espacio mundo / GravityZone.
 
 ## Bitácora (más reciente arriba, una línea por tarea)
+- 2026-08-30 [P2-12] Encuentros aleatorios: `ai::EncounterPool` (4 pares nave+torreta
+  pre-creados en `universe_test`, dormidos hasta activarse por proximidad — nunca se
+  crea/destruye fuera del pool). Cadencia de fondo 10s + 35% prob.; activa pirata o
+  patrulla de Seguridad a 150–300m del jugador; desactiva por muerte o distancia
+  >450m. Nave sin movimiento propio (simplificación anotada) — la torreta P2-03
+  reutilizada es la amenaza real. Fase 2 bloque "IA y facciones" COMPLETADO
+  (P2-11..12 2/2). Verificado en `universe_test` 65s headless (2 encuentros activados
+  sin crash) + regresión limpia en 7 escenas + CSC_SAVE_SMOKE PASS.
 - 2026-08-30 [P2-10] Misiones combate/escolta: `MissionType::Combat/Escort` sobre
   la IA compartida existente, sin código nuevo de decisión — `spawn_npc_combatant`
   (P2-06) + `AiThreatTarget`/`FactionMember` (P2-11). `MissionLink` liga cada
