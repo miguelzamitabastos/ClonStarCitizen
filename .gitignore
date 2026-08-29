@@ -6,6 +6,9 @@
 # IDE / editor
 .idea/
 .vscode/
+# Obsidian per-vault UI state (workspace layout, plugin cache) when a folder
+# in this repo is opened as a vault — local to the viewer, not project content.
+.obsidian/
 *.swp
 *.swo
 *~
