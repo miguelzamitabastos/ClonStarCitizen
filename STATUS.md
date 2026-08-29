@@ -318,6 +318,22 @@ Cuando una entidad lleva `LocalToShip { ship_entity, local_position, local_orien
 5. Al salir (quitar `LocalToShip`), se bakea la pose mundial y la sim pasa a espacio mundo / GravityZone.
 
 ## Bitácora (más reciente arriba, una línea por tarea)
+- 2026-08-30 [WSL] Segundo fix de captura de ratón — el de P2-07/29d5810 solo se
+  había probado sin crash en Xvfb, sin ratón real; Miguel reportó el bug de verdad
+  probando a mano en `on_foot_test`: al entrar el cursor real en la ventana, la
+  cámara se iba de golpe a mirar hacia abajo del todo (pantalla en blanco).
+  **Pendiente de que Miguel confirme que este segundo fix lo resuelve** — no
+  verificable desde esta sesión (sin ratón físico). Causa: mientras WSLg tarda un número arbitrario de frames en sincronizar
+  el warp del cursor tras `glfwSetCursorPos`, cada frame seguía leyendo el mismo
+  valor "stale" y el código anterior lo RECORTABA a ±200px y lo aplicaba igual —
+  mismo salto máximo repetido frame tras frame hasta clavar el pitch en su límite en
+  un puñado de frames. Arreglo: si el delta no es plausible (>120px), se DESCARTA
+  entero (cero look ese frame) en vez de recortarlo y aplicarlo, y se reintenta el
+  recentrado sin límite de frames — se autocorrige en cuanto WSLg sincroniza de
+  verdad, sin necesidad de adivinar cuántos frames tarda. Simplifica el código:
+  fuera `capture_centered`/`suppress_look_frames` (ya no hacen falta con esta regla).
+  Verificado headless (sin crash, 6 escenas) — la verificación real de que el look
+  ya no se dispara la hace Miguel con ratón físico, es lo único que puede probarlo.
 - 2026-08-30 [P2-13] Más localizaciones: `star_system.cfg` 4→7 cuerpos (Estacion-Beta,
   Planeta-02, Planeta-02-LZ). `spawn_universe_test` refactorizado para iterar TODOS
   los cuerpos de cada tipo (antes solo el primero vía `find_body`), sin tocar el

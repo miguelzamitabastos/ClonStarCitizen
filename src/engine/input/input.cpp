@@ -3,6 +3,8 @@
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
 
+#include <cmath>
+
 namespace csc::input {
 namespace {
 
@@ -44,14 +46,13 @@ void add_binding(InputSystem& sys, BindingDevice device, i32 code, Action action
     return false;
 }
 
-[[nodiscard]] f32 clampf(f32 v, f32 lo, f32 hi)
-{
-    return v < lo ? lo : (v > hi ? hi : v);
-}
-
-/// Max look delta (px) accepted from a single recentred sample — guards
-/// against a stray large jump instead of clamping legitimate fast turns away.
-constexpr f32 kMaxCaptureLookDeltaPx = 200.f;
+/// Max look delta (px) accepted from a single recentred sample. Beyond this,
+/// the sample is DROPPED (zero look this frame), never clamped-and-applied —
+/// see input_poll's doc comment for why: a clamped-but-still-huge delta
+/// repeats every frame while the compositor hasn't synced the recentre yet,
+/// which is what actually slammed the camera to its pitch limit on real
+/// WSLg. 120px/frame is already a very fast human flick at 60 FPS.
+constexpr f32 kMaxPlausibleLookDeltaPx = 120.f;
 
 }  // namespace
 
@@ -100,12 +101,10 @@ void input_set_config(InputSystem& sys, const InputConfig& config)
 
 void input_init(InputSystem& sys, GLFWwindow* window)
 {
-    sys.window               = window;
-    sys.has_last_cursor      = false;
-    sys.capture_centered     = false;
-    sys.suppress_look_frames = 0;
-    sys.last_cursor_x        = 0.0;
-    sys.last_cursor_y        = 0.0;
+    sys.window          = window;
+    sys.has_last_cursor = false;
+    sys.last_cursor_x   = 0.0;
+    sys.last_cursor_y   = 0.0;
     clear_action_state(sys.state);
     for (u16 i = 0; i < kActionCount; ++i) {
         sys.prev_pressed[i] = false;
@@ -129,11 +128,9 @@ void input_shutdown(InputSystem& sys)
             glfwSetInputMode(sys.window, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
         }
     }
-    sys.window               = nullptr;
-    sys.binding_count        = 0;
-    sys.has_last_cursor      = false;
-    sys.capture_centered     = false;
-    sys.suppress_look_frames = 0;
+    sys.window          = nullptr;
+    sys.binding_count   = 0;
+    sys.has_last_cursor = false;
     clear_action_state(sys.state);
 }
 
@@ -203,42 +200,29 @@ void input_poll(InputSystem& sys, ActionState& out)
     const bool cursor_disabled = glfwGetInputMode(win, GLFW_CURSOR) == GLFW_CURSOR_DISABLED;
 
     if (!cursor_disabled) {
-        // Cursor free (UI/menu): no relative look, and the next capture
-        // streak must re-centre from scratch rather than reuse a stale delta.
-        sys.capture_centered     = false;
-        sys.suppress_look_frames = 0;
-        sys.has_last_cursor      = false;
+        // Cursor free (UI/menu): no relative look.
+        sys.has_last_cursor = false;
     } else {
         int win_w = 0;
         int win_h = 0;
         glfwGetWindowSize(win, &win_w, &win_h);
 
-        if (win_w <= 0 || win_h <= 0) {
-            sys.capture_centered = false;
-        } else {
+        if (win_w > 0 && win_h > 0) {
             const double cx = static_cast<double>(win_w) * 0.5;
             const double cy = static_cast<double>(win_h) * 0.5;
 
-            if (!sys.capture_centered) {
-                // First frame of this capture streak: snap to centre without
-                // emitting a delta (the jump from wherever the cursor was is
-                // not a look input) and swallow the next couple of frames —
-                // the warp itself can echo back as a spurious sample.
-                glfwSetCursorPos(win, cx, cy);
-                sys.capture_centered     = true;
-                sys.suppress_look_frames = 2;
-            } else if (sys.suppress_look_frames > 0) {
-                --sys.suppress_look_frames;
-                glfwSetCursorPos(win, cx, cy);
-            } else {
-                const f32 look_x = clampf(
-                    static_cast<f32>(cursor_x - cx), -kMaxCaptureLookDeltaPx, kMaxCaptureLookDeltaPx);
-                const f32 look_y = clampf(
-                    static_cast<f32>(cursor_y - cy), -kMaxCaptureLookDeltaPx, kMaxCaptureLookDeltaPx);
-                out.axes[static_cast<u16>(ActionAxis::LookX)] = look_x;
-                out.axes[static_cast<u16>(ActionAxis::LookY)] = look_y;
-                glfwSetCursorPos(win, cx, cy);
+            const f32 raw_dx = static_cast<f32>(cursor_x - cx);
+            const f32 raw_dy = static_cast<f32>(cursor_y - cy);
+
+            // Apply only if plausible; otherwise DROP it (not clamp-and-apply
+            // — see input.hpp doc comment). Re-issue the recentre either way
+            // so the next frame gets another chance to observe a synced read.
+            if (std::abs(raw_dx) <= kMaxPlausibleLookDeltaPx
+                && std::abs(raw_dy) <= kMaxPlausibleLookDeltaPx) {
+                out.axes[static_cast<u16>(ActionAxis::LookX)] = raw_dx;
+                out.axes[static_cast<u16>(ActionAxis::LookY)] = raw_dy;
             }
+            glfwSetCursorPos(win, cx, cy);
         }
         sys.has_last_cursor = false; // recenter path doesn't use last_cursor_*
     }

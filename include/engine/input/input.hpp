@@ -39,12 +39,6 @@ struct InputSystem {
     double last_cursor_x   = 0.0;
     double last_cursor_y   = 0.0;
     bool   has_last_cursor = false;
-    /// True once the cursor has been warped to the window centre for the
-    /// current capture streak (WSLg-safe relative look, see input.cpp).
-    bool   capture_centered = false;
-    /// Frames to discard look deltas after (re)entering capture — absorbs the
-    /// warp echo / compositor spike some WSLg setups report on re-centre.
-    u8     suppress_look_frames = 0;
 
     bool prev_pressed[kActionCount]{};
     ActionState state{};
@@ -59,9 +53,16 @@ void input_set_config(InputSystem& sys, const InputConfig& config);
 /// While the OS cursor is disabled (GLFW_CURSOR_DISABLED, set by whoever owns
 /// capture this frame — input_init, debug UI's F1 toggle, or the pause/menu
 /// cursor unlock in game::ui), look deltas are measured from the window centre
-/// and the cursor is warped back every frame, instead of trusting GLFW's raw
-/// virtual position — some WSLg compositors still clamp/reset it at the
-/// window edge, which otherwise stalls or spikes mouse look.
+/// and the cursor is warped back every frame instead of trusting GLFW's raw
+/// virtual position. A delta is only ever applied if it's a plausible single-
+/// frame human motion; anything bigger is dropped outright (not clamped) and
+/// the recentre is retried next frame — under WSLg the compositor can take an
+/// arbitrary number of frames after launch/focus before it actually starts
+/// honouring the cursor warp, and until it does, the raw read is a stale
+/// value with no relation to the real cursor. Clamping that instead of
+/// dropping it would still apply the same maxed-out delta every single frame
+/// for as long as the desync lasts, slamming the camera to its pitch limit
+/// almost instantly — confirmed live against a real WSLg window/mouse.
 void input_poll(InputSystem& sys, ActionState& out);
 
 [[nodiscard]] const ActionState& input_actions(const InputSystem& sys);
