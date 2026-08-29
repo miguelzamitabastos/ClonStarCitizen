@@ -14,8 +14,8 @@ Fase 1 validada físicamente por el usuario (2026-08-10) — apertura de Fase 2.
   - [x] P2-05 Inventario completo (slots equipo, recogibles, uso de items)
   - [x] P2-06 IA combate a pie (detección, cobertura, disparo) sobre P2-11
   - [x] P2-07 Daño por zona (torso/extremidad) + muerte/reaparición jugador
-- Economía y misiones (P2-08..10): [.] 0/3
-  - [ ] P2-08 Simulación económica dinámica (producción/consumo, eventos de precio)
+- Economía y misiones (P2-08..10): [#] 1/3
+  - [x] P2-08 Simulación económica dinámica (producción/consumo, eventos de precio)
   - [ ] P2-09 Misiones encadenadas con ramificación simple
   - [ ] P2-10 Misiones combate/escolta reutilizando IA P2-03/P2-06
 - IA y facciones (P2-11..12):  [#] 1/2
@@ -68,6 +68,23 @@ Fase 1 validada físicamente por el usuario (2026-08-10) — apertura de Fase 2.
    distancia (sin line-of-sight esta fase) escalada por sensores P2-02 propios o
    del host (`SensorLink`, floor 30%). `ai::fixed_step` corre ANTES de
    character/flight en `game::fixed_step`. Buffer fijo 32 candidatos, cero heap.
+4. **P2-08 economía dinámica:** simulación de fondo, no por frame — `EconomyClock`
+   acumula `dt` en `economy::fixed_step` y solo dispara un "tick económico" cada
+   `kEconomyTickSeconds` (15s de tiempo de juego), tal como pide la nota de
+   arquitectura del roadmap. Un tick hace tres cosas en orden: (1) vacía
+   `PriceEventQueue` (cola de tamaño fijo, 16 slots) aplicando cada `PriceEvent`
+   como delta directo sobre `Market.stock`; (2) aplica el arrastre de
+   producción/consumo (`Market.production_rate[N]`, unidades/s por mercado,
+   dato en `markets.cfg` vía `rate_N` — MarketA produce mineral +1.5/s, MarketB
+   lo consume -1.0/s, coherente con el "barato aquí / caro allí" ya existente
+   de P1C); (3) rueda un evento aleatorio de escasez/superávit (`EconomyRng`
+   propio, 15% de probabilidad por tick, ±15..35 unidades) — cubre el caso
+   "eventos (escasez...)" del roadmap. El caso "misión completada en masa" no
+   es un evento aparte: `mission_try_complete_at_market` devuelve ahora
+   `(commodity_id, qty)` de la entrega, y `handle_interact` encola un
+   `PriceEvent` con ese `qty` como delta positivo — cuanto más grande la
+   entrega, mayor el efecto en precio, sin lógica nueva. Todo pasa por la
+   misma cola/tick, nunca se aplica un delta de precio de forma inmediata.
 
 ## Fase 1 — Vertical Slice — **COMPLETADA y validada** (histórico)
 
@@ -212,6 +229,15 @@ Cuando una entidad lleva `LocalToShip { ship_entity, local_position, local_orien
 5. Al salir (quitar `LocalToShip`), se bakea la pose mundial y la sim pasa a espacio mundo / GravityZone.
 
 ## Bitácora (más reciente arriba, una línea por tarea)
+- 2026-08-30 [P2-08] Economía dinámica: `EconomyClock` (tick de fondo cada 15s,
+  no por frame) + `PriceEventQueue` (16 slots) + `Market.production_rate[N]`
+  (data-driven, `rate_N` en markets.cfg). Un tick vacía la cola de eventos,
+  aplica arrastre de producción/consumo y rueda un evento aleatorio de escasez/
+  superávit (15% prob., propio `EconomyRng`). Misión completada en masa encola
+  un PriceEvent proporcional al qty entregado (`mission_try_complete_at_market`
+  ahora devuelve commodity_id+qty). Verificado en `economy_test` 50s headless:
+  evento de escasez disparado en el primer tick, sin crash; regresión limpia en
+  npc_combat_test/save_load_test.
 - 2026-08-29 [P2-07] Daño por zona (`combat::BodyZone` Torso/Head/Limb, rolado por
   CombatRng al disparar, ×2.5/×0.5/×1 sobre Health) + ciclo de muerte/reaparición del
   jugador (`SpawnPoint`+`RespawnTimer`, 3s, restaura HP/posición/InstanceTag). Fase 2

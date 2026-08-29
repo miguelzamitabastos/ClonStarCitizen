@@ -173,6 +173,16 @@ bool apply_market_kv(Market& m, const char* key, const char* value)
         }
         return false;
     }
+    // P2-08: units/second this market produces (positive) or consumes
+    // (negative) in the background — sign allowed, unlike stock_N/price_mod_N.
+    if (std::sscanf(key, "rate_%u", &idx) == 1 && idx < kMaxCommodities) {
+        float v = 0.f;
+        if (std::sscanf(value, "%f", &v) == 1) {
+            m.production_rate[idx] = v;
+            return true;
+        }
+        return false;
+    }
     return false;
 }
 
@@ -273,8 +283,9 @@ void init_market_defaults(Market& m)
 {
     m.ideal_stock = 50.f;
     for (u32 i = 0; i < kMaxCommodities; ++i) {
-        m.stock[i]     = 0;
-        m.price_mod[i] = 1.f;
+        m.stock[i]            = 0;
+        m.price_mod[i]        = 1.f;
+        m.production_rate[i]  = 0.f;
     }
 }
 
@@ -547,6 +558,102 @@ void mark_visit_missions(MissionActivePool& pool, u32 location_id)
     }
 }
 
+// --- P2-08: dynamic economy background simulation -----------------------------
+
+/// Applies one PriceEvent directly to Market::stock (clamped). No-op if the
+/// market id or commodity index is invalid — events can arrive after a scene
+/// change, never trust the ids blindly.
+void apply_price_event(MarketTable& markets, const PriceEvent& ev)
+{
+    Market* m = find_market_mut(markets, ev.market_id);
+    if (m == nullptr || ev.commodity_id >= kMaxCommodities) {
+        return;
+    }
+    const i32 next        = m->stock[ev.commodity_id] + ev.stock_delta;
+    m->stock[ev.commodity_id] = next < 0 ? 0 : (next > kMaxMarketStock ? kMaxMarketStock : next);
+}
+
+/// Background production/consumption: nudges every market's stock toward
+/// (production_rate > 0) or away from (< 0) its current level, independent of
+/// player trades. Called once per economic tick, not per frame.
+void apply_production_drift(
+    MarketTable& markets, const CommodityTable& commodities, f32 tick_seconds)
+{
+    for (u32 mi = 0; mi < markets.count; ++mi) {
+        Market& m = markets.items[mi];
+        for (u32 ci = 0; ci < commodities.count && ci < kMaxCommodities; ++ci) {
+            if (m.production_rate[ci] == 0.f) {
+                continue;
+            }
+            const f32 next =
+                static_cast<f32>(m.stock[ci]) + m.production_rate[ci] * tick_seconds;
+            m.stock[ci] = static_cast<i32>(clampf(next, 0.f, static_cast<f32>(kMaxMarketStock)));
+        }
+    }
+}
+
+/// P2-08: with kRandomEventChance probability, rolls a scarcity (shortage) or
+/// glut (surplus) at a random market/commodity — the "eventos (escasez, ...)"
+/// half of the task, distinct from mission-driven events (which are pushed by
+/// handle_interact instead). Deterministic LCG, same family as combat/mission
+/// RNGs but its own state (EconomyClock::rng_state).
+void maybe_roll_random_event(
+    MarketTable& markets, const CommodityTable& commodities, u32& rng_state)
+{
+    if (markets.count == 0 || commodities.count == 0) {
+        return;
+    }
+    const f32 roll = static_cast<f32>(lcg_next(rng_state) % 10000u) / 10000.f;
+    if (roll >= kRandomEventChance) {
+        return;
+    }
+
+    const u32 market_idx    = roll_u32(rng_state, 0, markets.count - 1);
+    const u32 commodity_idx = roll_u32(rng_state, 0, commodities.count - 1);
+    const bool scarcity     = (lcg_next(rng_state) & 1u) == 0u;
+    const i32 delta         = scarcity
+        ? roll_i32(rng_state, kScarcityDeltaMin, kScarcityDeltaMax)
+        : roll_i32(rng_state, kGlutDeltaMin, kGlutDeltaMax);
+
+    const Market&    m = markets.items[market_idx];
+    const Commodity& c = commodities.items[commodity_idx];
+    apply_price_event(markets, PriceEvent{m.id, c.id, delta});
+
+    log::log_info(
+        log::LogCategory::Game,
+        "Economy event: %s of %s at market '%s' (stock delta=%d)",
+        scarcity ? "scarcity" : "glut",
+        c.name,
+        m.name,
+        delta);
+}
+
+/// One background economic step: drain pending PriceEvents (pushed by other
+/// systems, e.g. mission completion), apply production/consumption drift,
+/// then maybe roll a fresh random event. Called from fixed_step, gated by
+/// EconomyClock so it runs every kEconomyTickSeconds — NOT every frame.
+void run_economic_tick(flecs::world& world)
+{
+    MarketTable* markets = world.try_get_mut<MarketTable>();
+    const CommodityTable* commodities = world.try_get<CommodityTable>();
+    if (markets == nullptr || commodities == nullptr) {
+        return;
+    }
+
+    if (PriceEventQueue* queue = world.try_get_mut<PriceEventQueue>()) {
+        PriceEvent ev{};
+        while (queue->try_pop(ev)) {
+            apply_price_event(*markets, ev);
+        }
+    }
+
+    apply_production_drift(*markets, *commodities, kEconomyTickSeconds);
+
+    if (EconomyClock* clock = world.try_get_mut<EconomyClock>()) {
+        maybe_roll_random_event(*markets, *commodities, clock->rng_state);
+    }
+}
+
 void spawn_market_marker(
     flecs::world& world, const char* name, const glm::vec3& center, f32 scale)
 {
@@ -809,8 +916,13 @@ bool mission_try_complete_at_market(
     CargoHold& hold,
     PlayerWallet& wallet,
     FactionReputation& rep,
-    u32 market_id)
+    u32 market_id,
+    u32& out_commodity_id,
+    u32& out_qty)
 {
+    out_commodity_id = 0;
+    out_qty          = 0;
+
     for (std::size_t i = 0; i < kMaxActiveMissions; ++i) {
         if (!pool.pool.is_active(i)) {
             continue;
@@ -827,7 +939,9 @@ bool mission_try_complete_at_market(
             if (!cargo_remove(hold, m.commodity_id, m.qty_required)) {
                 continue;
             }
-            m.qty_delivered = m.qty_required;
+            m.qty_delivered  = m.qty_required;
+            out_commodity_id = m.commodity_id;
+            out_qty          = m.qty_delivered; // P2-08: caller queues a PriceEvent
         } else if (m.type == MissionType::Visit) {
             if (m.qty_delivered < 1) {
                 continue;
@@ -862,6 +976,12 @@ void register_systems(flecs::world& world)
         pool.rng_state = 1;
         world.set<MissionActivePool>(pool);
     }
+    if (world.try_get<PriceEventQueue>() == nullptr) {
+        world.set<PriceEventQueue>(PriceEventQueue{});
+    }
+    if (world.try_get<EconomyClock>() == nullptr) {
+        world.set<EconomyClock>(EconomyClock{});
+    }
 }
 
 bool load_economy_data(flecs::world& world)
@@ -890,13 +1010,32 @@ bool load_economy_data(flecs::world& world)
         pool.rng_state = 1;
         world.set<MissionActivePool>(pool);
     }
+    if (world.try_get<PriceEventQueue>() == nullptr) {
+        world.set<PriceEventQueue>(PriceEventQueue{});
+    }
+    if (world.try_get<EconomyClock>() == nullptr) {
+        world.set<EconomyClock>(EconomyClock{});
+    }
 
     return ok_c && ok_m && ok_t;
 }
 
-void fixed_step(flecs::world& /*world*/, f32 /*dt*/)
+void fixed_step(flecs::world& world, f32 dt)
 {
-    // Event-driven (interact). Visit progress marked on TravelPad.
+    // P2-08: background economic simulation — NOT per-frame. Most ticks this
+    // is just an accumulator add; the actual simulation step (drain price
+    // events, apply production/consumption drift, maybe roll a random event)
+    // runs once every kEconomyTickSeconds of game time.
+    EconomyClock* clock = world.try_get_mut<EconomyClock>();
+    if (clock == nullptr) {
+        return;
+    }
+    clock->accumulated += dt;
+    if (clock->accumulated < kEconomyTickSeconds) {
+        return;
+    }
+    clock->accumulated -= kEconomyTickSeconds; // keep remainder, avoid cumulative drift
+    run_economic_tick(world);
 }
 
 bool handle_interact(flecs::world& world, flecs::entity_t actor_id, flecs::entity_t target_id)
@@ -1000,8 +1139,21 @@ bool handle_interact(flecs::world& world, flecs::entity_t actor_id, flecs::entit
         }
 
         if (dlg->is_turn_in) {
+            u32 delivered_commodity = 0;
+            u32 delivered_qty       = 0;
             if (mission_try_complete_at_market(
-                    *missions, *hold, *wallet, *rep, dlg->market_id)) {
+                    *missions, *hold, *wallet, *rep, dlg->market_id, delivered_commodity,
+                    delivered_qty)) {
+                // P2-08: goods delivered in bulk flood the local market —
+                // queued, applied at the next economic tick (never immediate).
+                if (delivered_qty > 0) {
+                    if (PriceEventQueue* queue = world.try_get_mut<PriceEventQueue>()) {
+                        (void)queue->push(
+                            PriceEvent{
+                                dlg->market_id, delivered_commodity,
+                                static_cast<i32>(delivered_qty)});
+                    }
+                }
                 log::log_info(
                     log::LogCategory::Game,
                     "Mission complete at market %u — credits=%d",

@@ -21,6 +21,18 @@ inline constexpr f32 kDefaultCargoVolume = 40.f;
 inline constexpr f32 kDefaultCargoMass   = 100.f;
 inline constexpr i32 kStartingCredits    = 500;
 
+// --- P2-08: dynamic economy (production/consumption + price events) ---------
+// Background simulation, NOT per-frame (08-FASE-2 "Notas de arquitectura"):
+// runs once every kEconomyTickSeconds of game time, fixed-capacity event queue.
+inline constexpr f32 kEconomyTickSeconds = 15.f;
+inline constexpr i32 kMaxMarketStock     = 500; ///< drift/event clamp ceiling
+inline constexpr u32 kMaxPriceEvents     = 16;
+inline constexpr f32 kRandomEventChance  = 0.15f; ///< P(event) rolled once per tick
+inline constexpr i32 kScarcityDeltaMin   = -35; ///< both negative: shortage → price up
+inline constexpr i32 kScarcityDeltaMax   = -15;
+inline constexpr i32 kGlutDeltaMin       = 15;  ///< both positive: surplus → price down
+inline constexpr i32 kGlutDeltaMax       = 35;
+
 inline constexpr const char* kCommoditiesPath      = "assets/data/commodities.cfg";
 inline constexpr const char* kMarketsPath          = "assets/data/markets.cfg";
 inline constexpr const char* kMissionTemplatesPath = "assets/data/mission_templates.cfg";
@@ -42,6 +54,10 @@ struct Market {
     f32  ideal_stock = 50.f;
     i32  stock[kMaxCommodities]{};
     f32  price_mod[kMaxCommodities]{};
+    /// P2-08: units/second this location produces (positive) or consumes
+    /// (negative) of each commodity in the background, independent of player
+    /// trades — data-driven via markets.cfg `rate_N`. 0 = no local activity.
+    f32  production_rate[kMaxCommodities]{};
 };
 
 struct CommodityTable {
@@ -97,6 +113,54 @@ struct MissionActive {
 struct MissionActivePool {
     memory::Pool<MissionActive, kMaxActiveMissions> pool{};
     u32                                             rng_state = 1;
+};
+
+/// P2-08: a discrete price perturbation — pushed by other systems (mission
+/// completion, etc.) as it happens, but only APPLIED once per economic tick
+/// (see EconomyClock / economy::fixed_step), never immediately. Fixed ring,
+/// no heap — same pattern as combat::DamageEventQueue / InteractEventQueue.
+struct PriceEvent {
+    u32 market_id    = 0;
+    u32 commodity_id = 0;
+    /// Added directly to Market::stock; negative = shortage (price rises),
+    /// positive = glut (price falls) — e.g. a delivered mission's qty.
+    i32 stock_delta  = 0;
+};
+
+struct PriceEventQueue {
+    PriceEvent events[kMaxPriceEvents]{};
+    u32        head  = 0;
+    u32        count = 0;
+
+    [[nodiscard]] bool push(const PriceEvent& ev)
+    {
+        if (count >= kMaxPriceEvents) {
+            return false;
+        }
+        const u32 idx = (head + count) % kMaxPriceEvents;
+        events[idx]   = ev;
+        ++count;
+        return true;
+    }
+
+    [[nodiscard]] bool try_pop(PriceEvent& out)
+    {
+        if (count == 0) {
+            return false;
+        }
+        out  = events[head];
+        head = (head + 1u) % kMaxPriceEvents;
+        --count;
+        return true;
+    }
+};
+
+/// P2-08: singleton clock gating the background economic simulation — the
+/// "not per-frame" cadence the architecture notes require. Ticks in
+/// economy::fixed_step; separate LCG state from combat/mission RNGs.
+struct EconomyClock {
+    f32 accumulated = 0.f;
+    u32 rng_state   = 7919u;
 };
 
 struct CargoSlot {
@@ -189,12 +253,17 @@ struct EconomyDebugSnapshot {
 [[nodiscard]] bool mission_try_accept(
     MissionActivePool& pool, const MissionTemplateTable& templates, u32 template_id);
 
+/// P2-08: `out_commodity_id`/`out_qty` report what a completed Delivery mission
+/// dropped off (0/0 for Visit missions or on failure) — the caller uses this to
+/// queue a PriceEvent (goods arriving in bulk nudge the local price).
 [[nodiscard]] bool mission_try_complete_at_market(
     MissionActivePool&   pool,
     CargoHold&           hold,
     PlayerWallet&        wallet,
     FactionReputation&   rep,
-    u32                  market_id);
+    u32                  market_id,
+    u32&                 out_commodity_id,
+    u32&                 out_qty);
 
 // --- Systems / scene API -----------------------------------------------------
 
