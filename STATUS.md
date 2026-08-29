@@ -1,12 +1,88 @@
 # STATUS
 
-## Fase activa: Fase 2 — Profundidad de Sistemas — **13/13 COMPLETADA, PARADA: validación física pendiente**
+## Fase activa: Fase 3 — Expansión de Contenido — **ABIERTA (0/9)**
 
-Fase 1 validada físicamente por el usuario (2026-08-10) — apertura de Fase 2.
-Las 13 tareas están implementadas y verificadas headless (build limpio + smoke
-tests por escena); **no se abre Fase 3 hasta el OK explícito de Miguel** tras
-probar a mano, mismo criterio que cerró Fase 1. Lista de verificación manual:
-mensaje de cierre de esta sesión / `.claude/VERIFICACION-PENDIENTE.md` si existe.
+Fase 2 validada físicamente por Miguel el 2026-08-30 (probó las 5 escenas de
+`.claude/VERIFICACION-PENDIENTE.md` a mano; solo se ven cuadros porque aún no hay
+assets de arte, coherente con las fases del roadmap — sin bloqueo). Con eso se
+cierra formalmente Fase 2 (13/13) y se abre Fase 3 según
+[[09-FASE-3-EXPANSION-DE-CONTENIDO]]
+(`docs/roadmap/files/09-FASE-3-EXPANSION-DE-CONTENIDO.md`).
+
+### Objetivo de Fase 3
+
+Catálogo de naves y equipamiento **dirigido por datos**, poder comprar/poseer
+naves distintas, estaciones/ciudades más grandes y pobladas, y más contenido de
+misiones — todo dentro del sistema estelar fijo de Fase 1D (ampliar el universo
+es Fase 4). El riesgo explícito de la fase: que se hardcodee contenido en C++ por
+velocidad. Objetivo contrario: añadir una nave / un arma / una misión = editar un
+archivo de datos, nunca tocar el motor.
+
+### Progreso Fase 3 — 0/9
+
+- Pipeline de datos (P3-01, P3-05, P3-08):       [ ] 0/3
+  - [ ] P3-01 Pipeline de datos de nave: stats (masa, empuje, hardpoints, capacidad
+        de carga) en archivos de configuración, no en código (dep. P1A-01, P0-05)
+  - [ ] P3-05 Catálogo de armas/equipamiento dirigido por datos, mismo patrón que
+        P3-01 (dep. P1A-08, P1B-06)
+  - [ ] P3-08 Herramienta interna (CLI/script) para validar y/o generar entradas de
+        catálogo antes de compilar (dep. P3-01, P3-05)
+- Catálogo y naves jugables (P3-02, P3-03):      [ ] 0/2
+  - [ ] P3-02 Catálogo de 4-6 tipos de nave (caza, carguero, exploración,
+        multipropósito) usando P3-01 (dep. P3-01)
+  - [ ] P3-03 Hangar y tienda de naves: comprar/vender/cambiar de nave activa,
+        reutilizando las transacciones de P1C-03 tal cual (dep. P3-02, P1C-03)
+- Mundo y personaje (P3-04, P3-06):              [ ] 0/2
+  - [ ] P3-04 Expansión de estaciones/ciudades: más NPCs, tiendas y dadores de
+        misión por localización (dep. P1D-05, P1C-06)
+  - [ ] P3-06 Personalización básica de personaje: trajes/armadura con stats
+        (protección, capacidad EVA) (dep. P1B-01, P3-05)
+- Misiones y verificación (P3-07, P3-09):        [ ] 0/2
+  - [ ] P3-07 Más contenido de misiones: plantillas adicionales + una línea
+        narrativa simple opcional (dep. P1C-04, P2-09)
+  - [ ] P3-09 Verificación `content_smoke_test`: carga todo el catálogo y valida
+        integridad (IDs únicos, referencias resolubles) (dep. P3-01..08)
+
+### Restricciones de arquitectura de Fase 3 (del roadmap, vinculantes)
+
+1. **Todo lo nuevo es datos, no código.** Una nave/arma/misión nueva no puede
+   requerir una rama de código nueva por tipo: si al añadir contenido hace falta un
+   `if`/`switch` por ID, falta un parámetro de datos, no un caso especial.
+2. **ID de texto estable y único por entrada** (ej. `"ship.fighter.hornet_clone"`),
+   validado en carga: IDs duplicados o referencias a IDs inexistentes (una nave que
+   apunta a un hardpoint de arma que no existe) **fallan la carga de forma clara**,
+   nunca en silencio con un valor por defecto.
+3. **P3-03 reutiliza P1C-03 tal cual** — una nave es un ítem con precio a efectos de
+   la transacción, no un sistema de comercio paralelo.
+4. **P3-08 puede ser un script simple** que recorra los archivos de datos y ejecute
+   las mismas validaciones que P3-09 antes del build (detectar un ID duplicado en
+   segundos en vez de en un build completo).
+5. Sigue vigente `.cursorrules`: DOD/ECS estricto, cero heap en Update/Render,
+   pools/arenas pre-asignados, GLM vía `include/engine/math/glm.hpp`.
+
+### Definition of Done de Fase 3 (del roadmap)
+
+- `content_smoke_test` carga el catálogo completo (naves + armas + misiones) sin
+  errores de validación y reporta un resumen (nº de entradas por tipo) en consola.
+- El jugador puede comprar al menos **dos naves distintas** del catálogo en el
+  hangar de una estación y pilotarlas, con diferencias de stats perceptibles
+  (velocidad, maniobrabilidad, capacidad de carga).
+- Añadir una nave nueva al juego, documentado como prueba en este `STATUS.md`, se
+  hace **solo** editando el archivo de datos correspondiente — sin tocar `.cpp`/`.hpp`.
+
+### Deuda técnica arrastrada de Fase 2 (pendiente de resolver en un único bump de schema)
+
+El save v1 **no serializa** los componentes nuevos de Fase 2: `ShipSubsystems`
+(P2-02), `DamageEvent.zone` / `CharacterDead` / `RespawnTimer` / `SpawnPoint`
+(P2-07), `CompletedMissions` (P2-09), `CrewMember` (P2-01). Decisión consolidada
+en las decisiones 1/2/5 de Fase 2: se resuelve con **un solo** bump de
+`schema_version` que junte todos estos componentes, no de forma incremental.
+Bug latente conocido de baja probabilidad: cargar una partida guardada justo en
+la ventana de "muerto, esperando respawn" deja `Health.hp=0` sin `CharacterDead`.
+Pendiente de decidir si ese bump entra en Fase 3 (al tocar el pipeline de datos de
+naves) o se difiere a Fase 6 (pulido).
+
+## Fase 2 — Profundidad de Sistemas — **COMPLETADA y validada** (13/13, validación física 2026-08-30)
 
 ## Progreso Fase 2 — 13/13 COMPLETADO
 - Naves y vuelo (P2-01..04):   [####] 4/4 — COMPLETADO
@@ -318,6 +394,14 @@ Cuando una entidad lleva `LocalToShip { ship_entity, local_position, local_orien
 5. Al salir (quitar `LocalToShip`), se bakea la pose mundial y la sim pasa a espacio mundo / GravityZone.
 
 ## Bitácora (más reciente arriba, una línea por tarea)
+- 2026-08-30 [Fase 2 → Fase 3] Miguel valida físicamente las 5 escenas de
+  `.claude/VERIFICACION-PENDIENTE.md` (solo cuadros, sin assets de arte todavía —
+  esperado por el roadmap). **Fase 2 CERRADA formalmente (13/13).** Abierta Fase 3
+  — Expansión de Contenido: 9 tareas (P3-01..09), eje = pipeline de datos para
+  naves/armas/misiones (añadir contenido = editar un archivo, no el motor).
+  Progreso, restricciones de arquitectura y DoD de la fase arriba en la sección
+  "Fase activa". Deuda de schema de save v1 de Fase 2 anotada como pendiente.
+  Checklist de verificación consumido — `.claude/VERIFICACION-PENDIENTE.md` eliminado.
 - 2026-08-30 [WSL] Segundo fix de captura de ratón — el de P2-07/29d5810 solo se
   había probado sin crash en Xvfb, sin ratón real; Miguel reportó el bug de verdad
   probando a mano en `on_foot_test`: al entrar el cursor real en la ventana, la
