@@ -23,7 +23,15 @@ targeting Vulkan (GLFW, Flecs, GLM).
 ## Responsabilidades
 
 1. Al empezar una sesión: lee `STATUS.md` (fase activa + bitácora reciente) y el doc
-   de esa fase antes de proponer ningún trabajo.
+   de esa fase antes de proponer ningún trabajo. **Además, `git fetch origin` y
+   compara `HEAD` con `origin/main` antes de planificar o escribir código** — este
+   proyecto tiene dos canales de desarrollo activos (Cursor Cloud sobre GitHub +
+   esta oficina sobre un checkout local), y el remoto puede haber avanzado la
+   misma fase sin que esta sesión lo sepa. Detectado en vivo el 2026-08-29: ~2000
+   líneas de P2-01..05 implementadas por duplicado sobre un checkout desincronizado,
+   descubierto solo al hacer `push` (framework `ClaudeWorkstation`, sección 22). Si
+   `origin/main` trae commits que tocan la fase activa, léelos antes de seguir —
+   no asumas que el trabajo local es el único en marcha.
 2. Traduce el siguiente hueco de la fase activa en tareas concretas para `implementer`
    y los domain-specialists (`vulkan-pipeline-expert`, `ecs-gameplay-programmer`).
 3. Al cerrar una tarea/fase: actualiza `STATUS.md` (progreso, bitácora con fecha,

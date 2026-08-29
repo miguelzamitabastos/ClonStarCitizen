@@ -51,12 +51,25 @@ código, no tiene rol propio en este proyecto.
 
 ## Canal de desarrollo remoto
 
-**Daemon local**, en esta misma máquina (Windows + WSL, RTX 5060 Ti) — el motor
-necesita compilar contra un SDK Vulkan real y, para ver render con GPU física,
-la máquina concreta que la tiene. `RemoteTrigger` (sandbox en la nube) es viable
-**solo** para build + smoke test headless: `AGENTS.md` ya documenta correr contra
-el driver Vulkan por software (lavapipe/llvmpipe vía Xvfb) sin GPU real — útil
-como CI de compilación, pero no sustituye validar render con hardware real.
+**Dos canales activos a la vez — leer antes de asumir que uno es el único:**
+
+1. **Daemon local**, en esta misma máquina (Windows + WSL, RTX 5060 Ti) — el motor
+   necesita compilar contra un SDK Vulkan real y, para ver render con GPU física,
+   la máquina concreta que la tiene. Es el canal de esta oficina (ClaudeWorkstation).
+2. **Cursor Cloud** (ver `AGENTS.md`, `.cursor/agents/`) — corre directo contra el
+   repo de GitHub, sin GPU, verificando con Vulkan por software (lavapipe/llvmpipe
+   vía Xvfb). Ya ha implementado y fusionado a `main` trabajo real de Fase 2 (PR #6)
+   de forma independiente a esta oficina.
+
+**Por eso, `git fetch origin` + comparar con `origin/main` es obligatorio antes de
+planificar o escribir código de la fase activa, no solo antes de pushear** —
+detectado en vivo el 2026-08-29: esta oficina implementó P2-01..05 por duplicado
+sobre un checkout desincronizado con lo que Cursor Cloud ya había fusionado,
+descubierto solo al hacer `push` (framework `ClaudeWorkstation`, sección 22).
+
+`RemoteTrigger` (routine en la nube de Anthropic) es viable igualmente **solo**
+para build + smoke test headless, mismo argumento lavapipe/Xvfb — no sustituye
+validar render con hardware real, que sigue siendo cosa del daemon local.
 
 **Requisito de hardware:** GPU / hardware específico (RTX 5060 Ti de esta máquina).
 
