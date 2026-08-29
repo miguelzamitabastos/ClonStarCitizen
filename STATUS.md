@@ -1,10 +1,14 @@
 # STATUS
 
-## Fase activa: Fase 2 — Profundidad de Sistemas (rama `release/fase-2-profundidad-de-sistemas`)
+## Fase activa: Fase 2 — Profundidad de Sistemas — **13/13 COMPLETADA, PARADA: validación física pendiente**
 
 Fase 1 validada físicamente por el usuario (2026-08-10) — apertura de Fase 2.
+Las 13 tareas están implementadas y verificadas headless (build limpio + smoke
+tests por escena); **no se abre Fase 3 hasta el OK explícito de Miguel** tras
+probar a mano, mismo criterio que cerró Fase 1. Lista de verificación manual:
+mensaje de cierre de esta sesión / `.claude/VERIFICACION-PENDIENTE.md` si existe.
 
-## Progreso Fase 2
+## Progreso Fase 2 — 13/13 COMPLETADO
 - Naves y vuelo (P2-01..04):   [####] 4/4 — COMPLETADO
   - [x] P2-01 Tripulación NPC (artillero / ingeniero) con asiento fijo LocalToShip
   - [x] P2-02 Daño por componente (ENG/SHD/WPN/SEN) vía DamageEvent.subsystem
@@ -21,8 +25,8 @@ Fase 1 validada físicamente por el usuario (2026-08-10) — apertura de Fase 2.
 - IA y facciones (P2-11..12):  [##] 2/2 — COMPLETADO
   - [x] P2-11 Framework de IA compartido (FSM patrulla/alerta/combate/huida + hostilidad por reputación)
   - [x] P2-12 Encuentros aleatorios por proximidad desde Pool
-- Mundo (P2-13):               [.] 0/1
-  - [ ] P2-13 Más localizaciones en el sistema fijo (esquema P1D-02)
+- Mundo (P2-13):               [#] 1/1 — COMPLETADO
+  - [x] P2-13 Más localizaciones en el sistema fijo (esquema P1D-02)
 
 ## Decisiones Fase 2 (documentadas)
 1. **P2-02 subsistemas:** 4 bancos fijos por nave (`ShipSubsystems`): Engines 300 HP,
@@ -156,6 +160,20 @@ Fase 1 validada físicamente por el usuario (2026-08-10) — apertura de Fase 2.
    Verificado en `universe_test` 65s headless: 2 encuentros de piratas
    activados sin crash, cero regresión en las 7 escenas restantes (todas
    corren `ai::fixed_step`).
+8. **P2-13 más localizaciones:** sin tocar el esquema P1D-02 ni la arquitectura
+   de streaming/floating-origin — `spawn_universe_test` (world.cpp) pasó de
+   `find_body()` (primer match de cada tipo) a **iterar todos** los cuerpos,
+   reutilizando el bloque de estación/LZ ya existente refactorizado a
+   `spawn_station_location`/`spawn_landing_zone_location` (nombres de entidad/
+   trigger derivados de `body.name`, único por convención del esquema — evita
+   colisión al tener 2+ estaciones). `star_system.cfg` pasa de 4 a 7 cuerpos:
+   `Estacion-Beta` (segunda estación navegable) + `Planeta-02`/`Planeta-02-LZ`
+   (segundo planeta con atmósfera + LZ). `station_pos`/`lz_pos` (primer match)
+   se mantienen como ancla del spawn del jugador y del log de estado — mismo
+   punto de partida que antes, ahora con más sitios que visitar alrededor.
+   Verificado en `universe_test`: log confirma "2 estaciones, 2 LZ, 2 planetas,
+   1 estrella"; smoke de rebase (`CSC_FORCE_REBASE_SMOKE=1`) sigue disparando
+   correctamente; cero regresión en las 7 escenas restantes.
 
 ## Fase 1 — Vertical Slice — **COMPLETADA y validada** (histórico)
 
@@ -300,6 +318,13 @@ Cuando una entidad lleva `LocalToShip { ship_entity, local_position, local_orien
 5. Al salir (quitar `LocalToShip`), se bakea la pose mundial y la sim pasa a espacio mundo / GravityZone.
 
 ## Bitácora (más reciente arriba, una línea por tarea)
+- 2026-08-30 [P2-13] Más localizaciones: `star_system.cfg` 4→7 cuerpos (Estacion-Beta,
+  Planeta-02, Planeta-02-LZ). `spawn_universe_test` refactorizado para iterar TODOS
+  los cuerpos de cada tipo (antes solo el primero vía `find_body`), sin tocar el
+  esquema P1D-02 ni la arquitectura de streaming/floating-origin. **Fase 2
+  COMPLETADA — 13/13 tareas.** PARADA: pendiente validación física de Miguel antes
+  de abrir Fase 3. Verificado: log confirma 2 estaciones/2 LZ/2 planetas/1 estrella
+  en universe_test, rebase smoke OK, cero regresión en 7 escenas + CSC_SAVE_SMOKE PASS.
 - 2026-08-30 [P2-12] Encuentros aleatorios: `ai::EncounterPool` (4 pares nave+torreta
   pre-creados en `universe_test`, dormidos hasta activarse por proximidad — nunca se
   crea/destruye fuera del pool). Cadencia de fondo 10s + 35% prob.; activa pirata o

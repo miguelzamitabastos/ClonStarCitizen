@@ -260,6 +260,129 @@ void attach_stream_content(LevelStreamTrigger& trig, flecs::entity e)
     return nullptr;
 }
 
+// --- P2-13: more locations, same P1D-02 schema/architecture -------------------
+// Refactored out of spawn_universe_test so ANY number of Station/LandingZone
+// bodies in StarSystemData gets the same treatment the first one always had —
+// no new content kind, no change to the streaming/floating-origin contract,
+// just looping instead of find_body()'s single-match lookup. Entity/trigger
+// names are derived from body->name (already unique per the P1D-02 schema)
+// so multiple locations don't collide on flecs' by-name entity lookup.
+
+/// Station host + interior gravity/stream trigger (deck, terminal, hatch) —
+/// exactly what the original single-station block built, parameterized.
+void spawn_station_location(flecs::world& world, const CelestialBody& body)
+{
+    char name_buf[world::kNameBytes + 24]{};
+
+    flight::RigidBody6DOF station_rb{};
+    station_rb.position     = body.position + glm::vec3{0.f, 8.f, 0.f};
+    station_rb.orientation  = glm::quat{1.f, 0.f, 0.f, 0.f};
+    station_rb.mass         = 1.e9f;
+    station_rb.inertia_diag = glm::vec3{1.e9f, 1.e9f, 1.e9f};
+
+    flecs::entity station = world.entity(body.name)
+                                 .set<flight::RigidBody6DOF>(station_rb)
+                                 .set<ecs::Position>(
+                                     {station_rb.position.x, station_rb.position.y,
+                                      station_rb.position.z})
+                                 .set<ecs::PreviousPosition>(
+                                     {station_rb.position.x, station_rb.position.y,
+                                      station_rb.position.z})
+                                 .set<ecs::Orientation>({station_rb.orientation})
+                                 .set<ecs::Scale>({6.f})
+                                 .add<ecs::InstanceTag>()
+                                 .add<ecs::KinematicFromRigidBody>()
+                                 .add<StationRoot>();
+
+    std::snprintf(name_buf, sizeof(name_buf), "%sGravity", body.name);
+    (void)character::spawn_gravity_zone_box(
+        world, body.position + glm::vec3{0.f, 2.f, 0.f}, glm::vec3{18.f, 8.f, 18.f},
+        glm::vec3{0.f, -1.f, 0.f}, character::kGravityDefault, name_buf);
+
+    LevelStreamTrigger trig{};
+    trig.center        = body.position;
+    trig.load_radius   = 100.f;
+    trig.unload_radius = 160.f;
+    trig.kind          = StreamContentKind::StationInterior;
+    trig.loaded        = false;
+
+    std::snprintf(name_buf, sizeof(name_buf), "%sDeck", body.name);
+    flecs::entity deck =
+        spawn_marker(world, name_buf, body.position + glm::vec3{0.f, 0.4f, 0.f}, 10.f, false);
+    deck.set<StreamContent>({StreamContentKind::StationInterior});
+    attach_stream_content(trig, deck);
+
+    std::snprintf(name_buf, sizeof(name_buf), "%s terminal", body.name);
+    flecs::entity terminal =
+        character::spawn_station_interactable(world, body.position + glm::vec3{0.f, 1.2f, -4.f}, name_buf);
+    terminal.set<StreamContent>({StreamContentKind::StationInterior});
+    if (terminal.has<ecs::InstanceTag>()) {
+        terminal.remove<ecs::InstanceTag>(); // inactive until the trigger loads it
+    }
+    attach_stream_content(trig, terminal);
+
+    std::snprintf(name_buf, sizeof(name_buf), "%s hatch", body.name);
+    flecs::entity hatch =
+        character::spawn_ship_hatch(world, station.id(), glm::vec3{0.f, 0.9f, 4.f}, name_buf);
+    hatch.set<StreamContent>({StreamContentKind::StationInterior});
+    if (hatch.has<ecs::InstanceTag>()) {
+        hatch.remove<ecs::InstanceTag>();
+    }
+    attach_stream_content(trig, hatch);
+
+    std::snprintf(name_buf, sizeof(name_buf), "Stream_%s", body.name);
+    world.entity(name_buf).set<LevelStreamTrigger>(trig);
+}
+
+/// Landing pad + beacon + gravity (+ atmosphere if a Planet body is at the
+/// same location) — exactly what the original single-LZ block built.
+void spawn_landing_zone_location(
+    flecs::world& world, const CelestialBody& body, const CelestialBody* co_located_planet)
+{
+    char name_buf[world::kNameBytes + 24]{};
+
+    LevelStreamTrigger trig{};
+    trig.center        = body.position;
+    trig.load_radius   = 150.f;
+    trig.unload_radius = 220.f;
+    trig.kind          = StreamContentKind::LandingZone;
+    trig.loaded        = false;
+
+    std::snprintf(name_buf, sizeof(name_buf), "%sPad", body.name);
+    flecs::entity lz_root =
+        spawn_marker(world, name_buf, body.position + glm::vec3{0.f, 0.5f, 0.f}, 14.f, false);
+    lz_root.add<LandingZoneRoot>();
+    lz_root.set<StreamContent>({StreamContentKind::LandingZone});
+    attach_stream_content(trig, lz_root);
+
+    std::snprintf(name_buf, sizeof(name_buf), "%sBeacon", body.name);
+    flecs::entity lz_beacon =
+        spawn_marker(world, name_buf, body.position + glm::vec3{8.f, 2.f, 0.f}, 2.5f, false);
+    lz_beacon.set<StreamContent>({StreamContentKind::LandingZone});
+    attach_stream_content(trig, lz_beacon);
+
+    std::snprintf(name_buf, sizeof(name_buf), "%sGravity", body.name);
+    (void)character::spawn_gravity_zone_box(
+        world, body.position + glm::vec3{0.f, 2.f, 0.f}, glm::vec3{40.f, 12.f, 40.f},
+        glm::vec3{0.f, -1.f, 0.f}, character::kGravityDefault * 0.85f, name_buf);
+
+    std::snprintf(name_buf, sizeof(name_buf), "Stream_%s", body.name);
+    world.entity(name_buf).set<LevelStreamTrigger>(trig);
+
+    // P2-04: atmósfera esférica si esta LZ tiene un planeta asociado (misma
+    // posición X/Z en el esquema P1D-02 — el espacio abierto sigue vacío).
+    if (co_located_planet != nullptr) {
+        flight::AtmosphereVolume atmo{};
+        atmo.center            = co_located_planet->position;
+        atmo.inner_radius      = co_located_planet->radius;
+        atmo.outer_radius      = co_located_planet->radius * 3.f;
+        atmo.sea_level_density = flight::kDefaultSeaLevelDensity;
+        atmo.surface_gravity   = flight::kDefaultSurfaceGravity * 0.85f;
+        std::snprintf(name_buf, sizeof(name_buf), "%sAtmosphere", co_located_planet->name);
+        world.entity(name_buf).set<flight::AtmosphereVolume>(atmo);
+    }
+}
+
 }  // namespace
 
 void register_systems(flecs::world& /*world*/)
@@ -471,132 +594,67 @@ flecs::entity spawn_universe_test(flecs::world& world, const StarSystemData& dat
         cam.far_plane = 12000.f;
     });
 
+    // P2-13: spawn EVERY Station/LandingZone/Planet/Star body in the data,
+    // not just the first of each — same P1D-02 schema, same per-body content
+    // the original single-location code built (now in the two helpers above),
+    // just looped. `station_pos`/`lz_pos` (first of each) stay the anchor for
+    // player spawn + the status log below, matching the original behaviour.
     const CelestialBody* station_body = find_body(data, CelestialBodyType::Station);
     const CelestialBody* lz_body      = find_body(data, CelestialBodyType::LandingZone);
-    const CelestialBody* planet_body  = find_body(data, CelestialBodyType::Planet);
-    const CelestialBody* star_body    = find_body(data, CelestialBodyType::Star);
-
     const glm::vec3 station_pos =
         station_body != nullptr ? station_body->position : glm::vec3{0.f, 0.f, 0.f};
     const glm::vec3 lz_pos =
         lz_body != nullptr ? lz_body->position : glm::vec3{0.f, 0.f, -2500.f};
 
-    // --- Station host (static RB — LocalToShip / GravityZone target, P1D-05) -
-    flight::RigidBody6DOF station_rb{};
-    station_rb.position    = station_pos + glm::vec3{0.f, 8.f, 0.f};
-    station_rb.orientation = glm::quat{1.f, 0.f, 0.f, 0.f};
-    station_rb.mass        = 1.e9f;
-    station_rb.inertia_diag = glm::vec3{1.e9f, 1.e9f, 1.e9f};
-
-    flecs::entity station = world.entity(
-                                    station_body != nullptr ? station_body->name : "Estacion-Alfa")
-                                .set<flight::RigidBody6DOF>(station_rb)
-                                .set<ecs::Position>(
-                                    {station_rb.position.x, station_rb.position.y, station_rb.position.z})
-                                .set<ecs::PreviousPosition>(
-                                    {station_rb.position.x, station_rb.position.y, station_rb.position.z})
-                                .set<ecs::Orientation>({station_rb.orientation})
-                                .set<ecs::Scale>({6.f})
-                                .add<ecs::InstanceTag>()
-                                .add<ecs::KinematicFromRigidBody>()
-                                .add<StationRoot>();
-
-    // Station gravity (world zone) — pad around station.
-    (void)character::spawn_gravity_zone_box(
-        world,
-        station_pos + glm::vec3{0.f, 2.f, 0.f},
-        glm::vec3{18.f, 8.f, 18.f},
-        glm::vec3{0.f, -1.f, 0.f},
-        character::kGravityDefault,
-        "EstacionAlfaGravity");
-
-    // Stream trigger: station interior props (soft InstanceTag toggle).
-    LevelStreamTrigger station_trig{};
-    station_trig.center         = station_pos;
-    station_trig.load_radius    = 100.f;
-    station_trig.unload_radius  = 160.f;
-    station_trig.kind           = StreamContentKind::StationInterior;
-    station_trig.loaded         = false;
-
-    flecs::entity deck = spawn_marker(
-        world, "EstacionAlfaDeck", station_pos + glm::vec3{0.f, 0.4f, 0.f}, 10.f, false);
-    deck.set<StreamContent>({StreamContentKind::StationInterior});
-    attach_stream_content(station_trig, deck);
-
-    flecs::entity terminal = character::spawn_station_interactable(
-        world, station_pos + glm::vec3{0.f, 1.2f, -4.f}, "Estacion-Alfa terminal");
-    terminal.set<StreamContent>({StreamContentKind::StationInterior});
-    // Interactable starts without InstanceTag from spawn — ensure inactive until load.
-    if (terminal.has<ecs::InstanceTag>()) {
-        terminal.remove<ecs::InstanceTag>();
+    u32 station_count = 0;
+    u32 lz_count      = 0;
+    u32 planet_count  = 0;
+    u32 star_count    = 0;
+    for (u32 i = 0; i < data.body_count; ++i) {
+        const CelestialBody& body = data.bodies[i];
+        switch (body.type) {
+        case CelestialBodyType::Station:
+            spawn_station_location(world, body);
+            ++station_count;
+            break;
+        case CelestialBodyType::LandingZone: {
+            // Co-located planet: same X/Z within a small tolerance (P1D-02
+            // convention — the LZ sits at the planet's surface, y differs).
+            const CelestialBody* planet = nullptr;
+            for (u32 j = 0; j < data.body_count; ++j) {
+                if (data.bodies[j].type != CelestialBodyType::Planet) {
+                    continue;
+                }
+                const f32 dx = data.bodies[j].position.x - body.position.x;
+                const f32 dz = data.bodies[j].position.z - body.position.z;
+                if (std::abs(dx) < 1.f && std::abs(dz) < 1.f) {
+                    planet = &data.bodies[j];
+                    break;
+                }
+            }
+            spawn_landing_zone_location(world, body, planet);
+            ++lz_count;
+            break;
+        }
+        case CelestialBodyType::Planet:
+            // Distant visual marker (always active — cheap cube).
+            (void)spawn_marker(
+                world, body.name, body.position, std::max(20.f, body.radius * 0.15f), true);
+            ++planet_count;
+            break;
+        case CelestialBodyType::Star:
+            (void)spawn_marker(world, body.name, body.position, 12.f, true);
+            ++star_count;
+            break;
+        }
     }
-    attach_stream_content(station_trig, terminal);
-
-    // Hatch / seat on station host for navigable interior (LocalToShip).
-    flecs::entity hatch = character::spawn_ship_hatch(
-        world, station.id(), glm::vec3{0.f, 0.9f, 4.f}, "Station hatch");
-    hatch.set<StreamContent>({StreamContentKind::StationInterior});
-    if (hatch.has<ecs::InstanceTag>()) {
-        hatch.remove<ecs::InstanceTag>();
-    }
-    attach_stream_content(station_trig, hatch);
-
-    world.entity("StreamStationInterior").set<LevelStreamTrigger>(station_trig);
-
-    // --- Planetary landing zone (P1D-06) ------------------------------------
-    LevelStreamTrigger lz_trig{};
-    lz_trig.center        = lz_pos;
-    lz_trig.load_radius   = 150.f;
-    lz_trig.unload_radius = 220.f;
-    lz_trig.kind          = StreamContentKind::LandingZone;
-    lz_trig.loaded        = false;
-
-    flecs::entity lz_root =
-        spawn_marker(world, "Planeta01LandingPad", lz_pos + glm::vec3{0.f, 0.5f, 0.f}, 14.f, false);
-    lz_root.add<LandingZoneRoot>();
-    lz_root.set<StreamContent>({StreamContentKind::LandingZone});
-    attach_stream_content(lz_trig, lz_root);
-
-    flecs::entity lz_beacon =
-        spawn_marker(world, "Planeta01Beacon", lz_pos + glm::vec3{8.f, 2.f, 0.f}, 2.5f, false);
-    lz_beacon.set<StreamContent>({StreamContentKind::LandingZone});
-    attach_stream_content(lz_trig, lz_beacon);
-
-    (void)character::spawn_gravity_zone_box(
-        world,
-        lz_pos + glm::vec3{0.f, 2.f, 0.f},
-        glm::vec3{40.f, 12.f, 40.f},
-        glm::vec3{0.f, -1.f, 0.f},
-        character::kGravityDefault * 0.85f,
-        "Planeta01Gravity");
-
-    world.entity("StreamLandingZone").set<LevelStreamTrigger>(lz_trig);
-
-    // P2-04: atmósfera esférica del planeta (arrastre/sustentación/gravedad al
-    // acercarse a la LZ; el espacio abierto sigue siendo vacío puro).
-    if (planet_body != nullptr) {
-        flight::AtmosphereVolume atmo{};
-        atmo.center            = planet_body->position;
-        atmo.inner_radius      = planet_body->radius;
-        atmo.outer_radius      = planet_body->radius * 3.f;
-        atmo.sea_level_density = flight::kDefaultSeaLevelDensity;
-        atmo.surface_gravity   = flight::kDefaultSurfaceGravity * 0.85f;
-        world.entity("Planeta01Atmosphere").set<flight::AtmosphereVolume>(atmo);
-    }
-
-    // Distant planet / star visual markers (always active — cheap cubes).
-    if (planet_body != nullptr) {
-        (void)spawn_marker(
-            world,
-            planet_body->name,
-            planet_body->position,
-            std::max(20.f, planet_body->radius * 0.15f),
-            true);
-    }
-    if (star_body != nullptr) {
-        (void)spawn_marker(
-            world, star_body->name, star_body->position, 12.f, true);
-    }
+    log::log_info(
+        log::LogCategory::Game,
+        "universe_test locations: %u station(s), %u landing zone(s), %u planet(s), %u star(s)",
+        station_count,
+        lz_count,
+        planet_count,
+        star_count);
 
     // Player ship near station, facing -Z toward landing zone (open-space stretch).
     flight::spawn_projectile_pool(world);
