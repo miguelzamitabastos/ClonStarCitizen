@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Edit(.claude/.last-test-run)",
+      "Bash(printf 'passed' > .claude/.last-test-run)",
+      "Bash(printf 'failed' > .claude/.last-test-run)",
+      "Bash(echo passed > .claude/.last-test-run)",
+      "Bash(echo failed > .claude/.last-test-run)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/block-secrets.sh\"", "timeout": 15 },
+          { "type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/require-tests-before-merge.sh\"", "timeout": 15 }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/telegram-notify.sh\"", "timeout": 15 }
+        ]
+      }
+    ]
+  },
+  "worktree": {
+    "bgIsolation": "worktree"
+  }
+}

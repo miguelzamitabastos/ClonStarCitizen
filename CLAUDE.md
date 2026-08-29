@@ -1,0 +1,118 @@
+# ClonStarCitizen
+
+## Qué es
+
+Motor de juego propio en C++20, Data-Oriented Design / ECS (Flecs) sobre Vulkan
+(ventana GLFW, matemática GLM). No es un client/server: un único ejecutable
+nativo (`clon_star_citizen`). Ambición tipo Star Citizen: vuelo espacial 6DOF,
+FPS a pie dentro de naves/estaciones, economía/misiones, universo con floating
+origin, HUD/audio, guardado/carga persistente.
+
+## Estado
+
+**Activo** — incorporado a la oficina de ClaudeWorkstation el 2026-08-29 (venía
+de "Pausado" en `PORTFOLIO.md`, retomado por Miguel). Fase activa: **Fase 2 —
+Profundidad de Sistemas**. Progreso detallado, bitácora y contratos técnicos
+vigentes en [STATUS.md](STATUS.md) — es la fuente de verdad del estado, se
+actualiza al cierre de cada tarea.
+
+## Fases del proyecto
+
+Roadmap completo en `docs/roadmap/files/` (wikilinks + ruta real):
+
+- [[00-MASTER-ROADMAP]] (`docs/roadmap/files/00-MASTER-ROADMAP.md`)
+- [[01-FASE-0-CIMIENTOS-DEL-MOTOR]] — completada
+- [[02-FASE-1A-VUELO-Y-NAVES]] — completada
+- [[03-FASE-1B-A-PIE-Y-FPS]] — completada
+- [[04-FASE-1C-ECONOMIA-Y-MISIONES]] — completada
+- [[05-FASE-1D-UNIVERSO-FIJO-Y-MUNDO]] — completada
+- [[06-FASE-1E-UI-HUD-AUDIO]] — completada
+- [[07-FASE-1F-PERSISTENCIA-Y-GUARDADO]] — completada
+- [[08-FASE-2-PROFUNDIDAD-DE-SISTEMAS]] — **en curso** (ver progreso en STATUS.md)
+- [[09-FASE-3-EXPANSION-DE-CONTENIDO]] — pendiente
+- [[10-FASE-4-UNIVERSO-PROCEDURAL]] — pendiente
+- [[11-FASE-5-MULTIJUGADOR-Y-RED]] — pendiente
+- [[12-FASE-6-PULIDO-HERRAMIENTAS-RELEASE]] — pendiente
+
+## Roles de la oficina en este proyecto
+
+| Rol | Qué hace |
+|---|---|
+| `architect` | Traduce la fase activa en tareas, mantiene `STATUS.md` al día |
+| `implementer` | Implementa tareas de fase de propósito general |
+| `vulkan-pipeline-expert` (domain-specialist) | Shaders, pipelines, swapchain, buffers GPU |
+| `ecs-gameplay-programmer` (domain-specialist) | Componentes/sistemas Flecs, gameplay ECS |
+| `tester` | Build limpio (`fast_compile`) + smoke test headless (Xvfb/lavapipe) de la escena de demo, sin suite automatizada tradicional |
+| `code-reviewer` | Revisa cumplimiento de `.cursorrules` y contratos de fase antes de mergear |
+| `researcher` | Vulkan/Flecs/GLM/GLFW puntual; usa `defuddle` para research web barato en tokens |
+
+`git-committer` (genérico de oficina) se invoca desde `implementer`/quien toque
+código, no tiene rol propio en este proyecto.
+
+## Canal de desarrollo remoto
+
+**Daemon local**, en esta misma máquina (Windows + WSL, RTX 5060 Ti) — el motor
+necesita compilar contra un SDK Vulkan real y, para ver render con GPU física,
+la máquina concreta que la tiene. `RemoteTrigger` (sandbox en la nube) es viable
+**solo** para build + smoke test headless: `AGENTS.md` ya documenta correr contra
+el driver Vulkan por software (lavapipe/llvmpipe vía Xvfb) sin GPU real — útil
+como CI de compilación, pero no sustituye validar render con hardware real.
+
+**Requisito de hardware:** GPU / hardware específico (RTX 5060 Ti de esta máquina).
+
+## Documentación de continuidad
+
+[STATUS.md](STATUS.md) (fase activa, progreso por tarea, bitácora con fecha,
+contratos técnicos vigentes) es la única fuente de estado entre sesiones sin
+conversación de por medio. Toda sesión la lee antes de empezar y la actualiza
+al terminar trabajo con impacto real.
+
+**Convención de enlace entre documentos (skill de oficina `obsidian-markdown`,
+`kepano/obsidian-skills`):** los documentos de fase y `STATUS.md` se referencian
+con wikilinks `[[nombre-sin-extensión]]` además de la ruta real — permite saltar
+directo entre documentos relacionados (menos grep, menos tokens) y, si se abre
+`docs/roadmap/files/` como vault en Obsidian, los enlaces resuelven igual.
+`obsidian-cli` (pilotar una instancia real de Obsidian) **no** funciona desde
+esta sesión WSL contra el Obsidian de Windows — IPC local, mismo SO requerido
+(detalle en `framework-universal-oficina-claude.md` sección 21 de
+`ClaudeWorkstation`); las convenciones de formato (wikilinks, properties,
+callouts) sí aplican siempre, con o sin la app abierta.
+
+## Reglas no negociables
+
+- Ningún commit puede contener claves de API en texto plano.
+- **Arquitectura del motor (`.cursorrules`, sin excepción):** prohibida la OOP
+  clásica para entidades de juego; DOD/ECS estricto. Cero asignación dinámica
+  dentro del bucle Update/Render — pools/arenas pre-asignados; destruir = marcar
+  slot inactivo, nunca liberar en vivo. Matemática vectorial EXCLUSIVAMENTE GLM
+  vía `include/engine/math/glm.hpp`. Minimizar draw calls (instancing).
+- No hay suite de tests automatizada: el "tests en verde" del hook
+  `require-tests-before-merge.sh` = build limpio (`fast_compile`, sin warnings
+  nuevos) + smoke test headless de la escena de demo relevante, registrado por
+  `tester` en `.claude/.last-test-run`.
+- Si una fase o tarea tiene un criterio de salida que solo Miguel puede validar
+  (ej. probar una escena a mano), el último mensaje de la sesión incluye una
+  sección `### 🔎 VERIFICACIÓN MANUAL` con pasos concretos — el hook
+  `telegram-notify.sh` está instalado pero inactivo en esta máquina (sin
+  `_framework/office-notify.env` configurado aquí), así que hoy esa sección solo
+  llega por el mensaje de la sesión, no por Telegram.
+- Ninguna sesión termina con cambios de código sin commitear — quien los hizo
+  invoca el protocolo de `git-committer` (revisar diff, nunca `add -A` a ciegas,
+  nunca secretos) antes de dar la tarea por terminada. El `push` a remoto sigue
+  necesitando que Miguel lo pida explícitamente en este proyecto (a diferencia
+  de `ClaudeWorkstation`, que sí tiene autopush).
+- Antes de resolver una tarea desde cero, comprueba si ya existe un skill (de
+  oficina o de `.claude/skills/`) que la cubra — incluye `fast_compile` (build)
+  y `obsidian-markdown`/`defuddle` (documentación/research).
+
+## Convenciones de código
+
+- **Stack:** C++20, CMake + FetchContent (Flecs 4.1.6, GLM 1.0.1), Vulkan
+  (GLFW para ventana/input), Dear ImGui (UI/HUD), miniaudio (audio 3D).
+- **Estructura:** `include/engine/` y `src/engine/` (motor: config, ECS, input,
+  platform, debug, scene) vs. `include/game/` y `src/game/` (gameplay: character,
+  combat, flight, ui, world). Ver `docs/game-modules.md` para el mapa completo.
+- **Compilación:** `.claude/skills/fast_compile/SKILL.md` —
+  `cmake --build build -j$(nproc)`, es el comando de verificación obligatorio.
+- Documentación y mensajes de commit en español, siguiendo el estilo ya
+  existente en `STATUS.md` y el historial de commits del repo.
