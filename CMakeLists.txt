@@ -169,6 +169,7 @@ set(ENGINE_SOURCES
     src/game/world/terrain_stream.cpp
     src/game/world/galaxy.cpp
     src/game/world/resources.cpp
+    src/game/world/poi_catalog.cpp
     src/game/ui/ui.cpp
     src/game/audio/audio.cpp
     src/game/save/save.cpp

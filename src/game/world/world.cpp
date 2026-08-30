@@ -5,6 +5,7 @@
 #include "game/ai/ai.hpp"
 #include "game/character/character.hpp"
 #include "game/flight/flight.hpp"
+#include "game/world/poi_catalog.hpp"
 #include "game/world/resources.hpp"
 #include "game/world/star_system_gen.hpp"
 
@@ -778,6 +779,7 @@ flecs::entity spawn_universe_test(
     // P4-06: procedurally-placed minable asteroids for this system.
     if (system_seed != 0) {
         spawn_asteroid_field(world, system_seed);
+        spawn_pois_for_system(world, system_seed, data);  // P4-07
     }
 
     // Player ship near station, facing -Z toward landing zone (open-space stretch).

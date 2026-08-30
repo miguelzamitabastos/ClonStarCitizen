@@ -15,6 +15,7 @@
 #include "game/ui/ui.hpp"
 #include "game/world/galaxy.hpp"
 #include "game/world/planet_terrain.hpp"
+#include "game/world/poi_catalog.hpp"
 #include "game/world/resources.hpp"
 #include "game/world/star_system_gen.hpp"
 #include "game/world/terrain_stream.hpp"
@@ -398,6 +399,9 @@ bool setup_universe_test(SceneContext& ctx)
     }
     if (std::getenv("CSC_RESOURCES_SMOKE") != nullptr) {
         (void)game::world::resources_smoke_test();  // P4-06
+    }
+    if (std::getenv("CSC_POI_SMOKE") != nullptr) {
+        (void)game::world::poi_smoke_test();  // P4-07
     }
 
     // P4-05: the galaxy this system belongs to (node 0 = the composed home
@@ -860,6 +864,7 @@ bool scene_setup_by_name(const char* name, SceneContext& ctx)
         (void)game::flight::validate_ship_weapon_refs(*ctx.world);
         (void)game::economy::load_location_catalog(*ctx.world); // P3-04
         (void)game::character::load_suit_catalog(*ctx.world);   // P3-06
+        (void)game::world::load_poi_catalog(*ctx.world);        // P4-07
     }
 
     return desc->setup(ctx);

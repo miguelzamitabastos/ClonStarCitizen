@@ -1,6 +1,6 @@
 # STATUS
 
-## Fase activa: Fase 4 — Universo Procedural — **EN CURSO (6/8)**
+## Fase activa: Fase 4 — Universo Procedural — **EN CURSO (7/8)**
 
 Fase 3 validada físicamente por Miguel el 2026-08-30 (probó las 6 secciones de
 `.claude/VERIFICACION-PENDIENTE.md` a mano: `content_smoke_test`, naves/armas por
@@ -19,7 +19,7 @@ suficiente contenido curado insertado sobre lo procedural para que no se sienta
 vacío. El sistema fijo de Fase 1 pasa a ser un caso particular (semilla fija) del
 generador, no se descarta. Es la fase técnicamente más exigente después de Fase 0.
 
-### Progreso Fase 4 — 6/8
+### Progreso Fase 4 — 7/8
 
 - [x] P4-01 Algoritmo de generación de sistema estelar (semilla → estrella,
       planetas, órbitas) (dep. P1D-02)
@@ -34,7 +34,7 @@ generador, no se descarta. Es la fase técnicamente más exigente después de Fa
       galaxia simplificado (dep. P4-01)
 - [x] P4-06 Distribución procedural de recursos minables (asteroides/superficie)
       (dep. P4-02)
-- [ ] P4-07 Inserción de puntos de interés curados sobre el terreno procedural
+- [x] P4-07 Inserción de puntos de interés curados sobre el terreno procedural
       (estaciones, POIs a mano) (dep. P4-02, P3-04)
 - [ ] P4-08 Escena demo `procedural_test`: viaje entre dos sistemas generados +
       aterrizaje en terreno real (dep. P4-01..07)
@@ -280,6 +280,29 @@ junte todo esto. Bug latente conocido de baja probabilidad: cargar en la ventana
    aún no se renderiza.
    Verificado: build limpio (0 warnings) + `CSC_RESOURCES_SMOKE: PASS` + 11
    escenas headless + los 9 gates de smoke previos PASS + `validate_catalogs.py` OK.
+
+7. **P4-07 POIs curados sobre el universo procedural:** módulo nuevo
+   `game/world/poi_catalog.{hpp,cpp}` + `assets/data/pois.cfg` (`[[poi]]`) →
+   singleton `PoiCatalog` de `PoiDef` (`kMaxPoiDefs=24`). Cada POI: `id` único,
+   `kind` (station/outpost/beacon/wreck), `system` (`home` o una semilla), y una
+   de tres colocaciones — `orbit` (radio/ángulo/y), `planet_surface` (Nº de
+   planeta + lat/lon + altitud → dirección sobre la esfera del planeta,
+   `centro + dir*(radio + altitud)`), `absolute` (`x,y,z`). Opcional
+   `location_id`: si resuelve en el `LocationCatalog` de P3-04, se pueblan sus
+   NPCs en la posición del POI (`economy::populate_locations` con un solo
+   placement) — el puente "estación curada = localización poblada".
+   `load_poi_catalog` en `scene_setup_by_name`; `spawn_pois_for_system(world,
+   system_seed, data)` en `spawn_universe_test` instancia los POIs cuyo sistema
+   coincide. `pois.cfg` arranca con 4 en el sistema home (relé, outpost, pecio,
+   campamento en superficie). Gate `CSC_POI_SMOKE=1`: catálogo carga, ids únicos,
+   `planet_index` plausible, colocación determinista.
+   **Fuera de alcance, anotado:** `planet_surface` usa el radio de esfera media +
+   altitud; encajar el POI a la altura exacta del terreno (`planet_height` de
+   P4-02) es de P4-08, cuando el terreno se renderiza. Los POI de tipo `station`
+   se instancian como marcadores + (si hay `location_id`) NPCs; el interior
+   navegable completo lo ensambla P4-08.
+   Verificado: build limpio (0 warnings) + `CSC_POI_SMOKE: PASS` + 11 escenas
+   headless + los 10 gates de smoke previos PASS + `validate_catalogs.py` OK.
 
 ---
 
@@ -942,6 +965,17 @@ Cuando una entidad lleva `LocalToShip { ship_entity, local_position, local_orien
 5. Al salir (quitar `LocalToShip`), se bakea la pose mundial y la sim pasa a espacio mundo / GravityZone.
 
 ## Bitácora (más reciente arriba, una línea por tarea)
+- 2026-08-30 [P4-07] POIs curados sobre el universo procedural:
+  `game/world/poi_catalog.{hpp,cpp}` + `assets/data/pois.cfg` (`[[poi]]`) →
+  `PoiCatalog`. Colocación por `orbit` / `planet_surface` (lat/lon sobre la
+  esfera del planeta) / `absolute`; `location_id` opcional puebla NPCs de P3-04
+  en el POI. `load_poi_catalog` en `scene_setup_by_name`;
+  `spawn_pois_for_system` en `spawn_universe_test`. 4 POIs de arranque en el
+  sistema home. Gate `CSC_POI_SMOKE=1` PASS (ids únicos, planet_index plausible,
+  colocación determinista). Encaje exacto a la altura del terreno → P4-08.
+  Verificado: build 0 warnings + POI_SMOKE PASS + 11 escenas + 10 smokes previos
+  PASS + validador OK. **Sin verificación manual** (headless; los POIs se ven
+  con P4-08).
 - 2026-08-30 [P4-06] Recursos minables procedurales: `game/world/resources.{hpp,cpp}`
   — extensión de la economía de P1C (minar = commodity a la `CargoHold`, no
   sistema paralelo). `generate_asteroid_field(system_seed,...)` determinista
