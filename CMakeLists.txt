@@ -154,6 +154,7 @@ set(ENGINE_SOURCES
     src/engine/vulkan/renderer.cpp
     src/engine/debug/debug_ui.cpp
     src/game/flight/flight.cpp
+    src/game/flight/ship_catalog.cpp
     src/game/character/character.cpp
     src/game/ai/ai.cpp
     src/game/tick.cpp

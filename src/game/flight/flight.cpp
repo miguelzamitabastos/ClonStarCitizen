@@ -5,10 +5,12 @@
 #include "game/ai/ai.hpp"
 #include "game/character/character.hpp"
 #include "game/economy/economy.hpp"
+#include "game/flight/ship_catalog.hpp"
 #include "game/save/save.hpp"
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 
 namespace csc::game::flight {
 namespace {
@@ -48,19 +50,42 @@ void add_thruster(ThrusterSet& set, const glm::vec3& pos, const glm::vec3& dir, 
     ++set.count;
 }
 
-void build_default_thruster_set(ThrusterSet& set)
+// P3-01: the thruster rig geometry is fixed; per-ship data only scales the
+// three force tiers pulled from the ShipDef (defaults == the Fase 1/2 numbers).
+void build_thruster_set(ThrusterSet& set, const ShipDef& def)
 {
     set = ThrusterSet{};
-    add_thruster(set, {0.f, 0.f, 2.5f}, {0.f, 0.f, -1.f}, kMainThrusterForceN);
-    add_thruster(set, {0.f, 0.f, -2.5f}, {0.f, 0.f, 1.f}, kRetroThrusterForceN);
-    add_thruster(set, {2.f, 0.f, 0.f}, {-1.f, 0.f, 0.f}, kManeuverThrusterForceN);
-    add_thruster(set, {-2.f, 0.f, 0.f}, {1.f, 0.f, 0.f}, kManeuverThrusterForceN);
-    add_thruster(set, {0.f, 2.f, 0.f}, {0.f, -1.f, 0.f}, kManeuverThrusterForceN);
-    add_thruster(set, {0.f, -2.f, 0.f}, {0.f, 1.f, 0.f}, kManeuverThrusterForceN);
-    add_thruster(set, {1.5f, 0.f, -1.5f}, {0.f, 0.f, 1.f}, kManeuverThrusterForceN * 0.6f);
-    add_thruster(set, {-1.5f, 0.f, -1.5f}, {0.f, 0.f, 1.f}, kManeuverThrusterForceN * 0.6f);
-    add_thruster(set, {1.5f, 0.f, 1.5f}, {0.f, 0.f, -1.f}, kManeuverThrusterForceN * 0.6f);
-    add_thruster(set, {-1.5f, 0.f, 1.5f}, {0.f, 0.f, -1.f}, kManeuverThrusterForceN * 0.6f);
+    const f32 mv = def.maneuver_thrust_n;
+    add_thruster(set, {0.f, 0.f, 2.5f}, {0.f, 0.f, -1.f}, def.main_thrust_n);
+    add_thruster(set, {0.f, 0.f, -2.5f}, {0.f, 0.f, 1.f}, def.retro_thrust_n);
+    add_thruster(set, {2.f, 0.f, 0.f}, {-1.f, 0.f, 0.f}, mv);
+    add_thruster(set, {-2.f, 0.f, 0.f}, {1.f, 0.f, 0.f}, mv);
+    add_thruster(set, {0.f, 2.f, 0.f}, {0.f, -1.f, 0.f}, mv);
+    add_thruster(set, {0.f, -2.f, 0.f}, {0.f, 1.f, 0.f}, mv);
+    add_thruster(set, {1.5f, 0.f, -1.5f}, {0.f, 0.f, 1.f}, mv * 0.6f);
+    add_thruster(set, {-1.5f, 0.f, -1.5f}, {0.f, 0.f, 1.f}, mv * 0.6f);
+    add_thruster(set, {1.5f, 0.f, 1.5f}, {0.f, 0.f, -1.f}, mv * 0.6f);
+    add_thruster(set, {-1.5f, 0.f, 1.5f}, {0.f, 0.f, -1.f}, mv * 0.6f);
+}
+
+/// Resolve a ShipDef by id from the catalog on `world`. Falls back (with a
+/// warning) to the built-in ShipDef defaults when the catalog is absent or the
+/// id is unknown — keeps every scene runnable even without ships.cfg.
+[[nodiscard]] ShipDef resolve_ship_def(
+    flecs::world& world, const char* ship_id, const char* default_id)
+{
+    const char*    id  = (ship_id != nullptr && ship_id[0] != '\0') ? ship_id : default_id;
+    const ShipDef* def = find_ship_def(world, id);
+    if (def != nullptr) {
+        return *def;
+    }
+    log::log_warn(
+        log::LogCategory::Config,
+        "ship id '%s' not in catalog — using built-in defaults",
+        (id != nullptr) ? id : "(null)");
+    ShipDef fallback{};
+    std::snprintf(fallback.id, sizeof(fallback.id), "%s", (id != nullptr) ? id : default_id);
+    return fallback;
 }
 
 [[nodiscard]] glm::vec3 body_to_world(const glm::quat& q, const glm::vec3& v)
@@ -1171,7 +1196,11 @@ void fixed_step(flecs::world& world, f32 dt)
         glm::vec3 torque_body{};
         accumulate_thruster_wrench(
             thrusters, plant.frac_thrusters * eng_eff, force_body, torque_body);
-        torque_body += ctrl.torque_input * kMaxTorqueNm * plant.frac_thrusters * eng_eff;
+        // P3-01: rotation authority is per-ship data (ShipSpec from the ShipDef);
+        // no ShipSpec (bare targets) → the Fase 1/2 constant.
+        const ShipSpec* spec      = e.try_get<ShipSpec>();
+        const f32       max_torque = (spec != nullptr) ? spec->max_torque_nm : kMaxTorqueNm;
+        torque_body += ctrl.torque_input * max_torque * plant.frac_thrusters * eng_eff;
 
         const glm::vec3 force_world =
             body_to_world(rb.orientation, force_body) + aero_force_world;
@@ -1289,51 +1318,58 @@ void register_systems(flecs::world& world)
         });
 }
 
-flecs::entity spawn_player_ship(flecs::world& world, const glm::vec3& position)
+flecs::entity spawn_player_ship(
+    flecs::world& world, const glm::vec3& position, const char* ship_id)
 {
+    // P3-01: every stat below comes from the ShipDef (ships.cfg), not literals.
+    const ShipDef def = resolve_ship_def(world, ship_id, kDefaultPlayerShipId);
+
     RigidBody6DOF rb{};
     rb.position     = position;
     rb.orientation  = glm::quat{1.f, 0.f, 0.f, 0.f};
-    rb.mass         = kShipMassKg;
-    rb.inertia_diag = glm::vec3{180000.f, 220000.f, 90000.f};
+    rb.mass         = def.mass_kg;
+    rb.inertia_diag = def.inertia_diag;
 
     ThrusterSet thrusters{};
-    build_default_thruster_set(thrusters);
+    build_thruster_set(thrusters, def);
 
     PowerPlant plant{};
-    plant.output_rate = 450.f;
-    plant.capacity    = 1200.f;
-    plant.stored      = 1200.f;
+    plant.output_rate = def.power_output;
+    plant.capacity    = def.power_capacity;
+    plant.stored      = def.power_capacity;
 
     ShieldGenerator shield{};
-    shield.max_capacity = 600.f;
-    shield.current      = 600.f;
-    shield.regen_rate   = 35.f;
-    shield.power_draw   = 90.f;
+    shield.max_capacity = def.shield_capacity;
+    shield.current      = def.shield_capacity;
+    shield.regen_rate   = def.shield_regen;
+    shield.power_draw   = def.shield_power_draw;
 
     ShipHull hull{};
-    hull.max_hp = 1000.f;
-    hull.hp     = 1000.f;
-    hull.radius = 3.5f;
+    hull.max_hp = def.hull_hp;
+    hull.hp     = def.hull_hp;
+    hull.radius = def.hull_radius;
 
+    // Hardpoint count + placement is data (P3-01); the weapon fitted to each
+    // mount stays the Fase 1/2 default until P3-05 (weapon catalog).
     WeaponMountSet weapons{};
-    weapons.count                    = 1;
-    weapons.mounts[0].local_offset   = {0.f, -0.5f, -3.f};
-    weapons.mounts[0].cooldown       = 0.22f;
-    weapons.mounts[0].energy_cost    = 12.f;
-    weapons.mounts[0].damage         = 60.f;
-    weapons.mounts[0].range          = 500.f;
-    weapons.mounts[0].hitscan        = false;
+    weapons.count = (def.weapon_mount_count == 0) ? 1u : def.weapon_mount_count;
+    for (u32 i = 0; i < weapons.count && i < kMaxWeaponMounts; ++i) {
+        weapons.mounts[i].local_offset = def.weapon_mount_offset[i];
+        weapons.mounts[i].cooldown     = 0.22f;
+        weapons.mounts[i].energy_cost  = 12.f;
+        weapons.mounts[i].damage       = 60.f;
+        weapons.mounts[i].range        = 500.f;
+        weapons.mounts[i].hitscan      = false;
+    }
 
     FlightControl ctrl{};
     ctrl.coupled = true;
 
     // P2-02: independently damageable banks (ENG / SHD / WPN / SEN).
     ShipSubsystems subsystems{};
-    subsystems.items[combat::subsystem_index(combat::Subsystem::Engines)] = {300.f, 300.f};
-    subsystems.items[combat::subsystem_index(combat::Subsystem::Shields)] = {250.f, 250.f};
-    subsystems.items[combat::subsystem_index(combat::Subsystem::Weapons)] = {200.f, 200.f};
-    subsystems.items[combat::subsystem_index(combat::Subsystem::Sensors)] = {150.f, 150.f};
+    for (u32 i = 0; i < combat::kSubsystemCount; ++i) {
+        subsystems.items[i] = {def.subsystem_hp[i], def.subsystem_hp[i]};
+    }
 
     const ecs::Position pos{position.x, position.y, position.z};
 
@@ -1345,6 +1381,7 @@ flecs::entity spawn_player_ship(flecs::world& world, const glm::vec3& position)
             .set<ShieldGenerator>(shield)
             .set<ShipHull>(hull)
             .set<ShipSubsystems>(subsystems)
+            .set<ShipSpec>(ShipSpec{def.max_torque_nm})
             .set<AeroProfile>(AeroProfile{})
             .set<WeaponMountSet>(weapons)
             .set<FlightControl>(ctrl)
@@ -1352,17 +1389,23 @@ flecs::entity spawn_player_ship(flecs::world& world, const glm::vec3& position)
             .set<ecs::PreviousPosition>({pos.x, pos.y, pos.z})
             .set<ecs::Velocity>({0.f, 0.f, 0.f})
             .set<ecs::Orientation>({rb.orientation})
-            .set<ecs::Scale>({2.2f})
+            .set<ecs::Scale>({def.render_scale})
             .add<ecs::InstanceTag>()
             .add<ecs::KinematicFromRigidBody>()
             .add<PlayerShip>();
 
     economy::attach_cargo_hold_if_missing(ship);
+    if (auto* hold = ship.try_get_mut<economy::CargoHold>()) {
+        hold->capacity_volume = def.cargo_volume;
+        hold->capacity_mass   = def.cargo_mass;
+    }
     (void)save::assign_persistent_id(world, ship);
 
     log::log_info(
         log::LogCategory::Core,
-        "Spawned player ship at (%.1f, %.1f, %.1f) mass=%.0f thrusters=%u",
+        "Spawned player ship '%s' (%s) at (%.1f, %.1f, %.1f) mass=%.0f thrusters=%u",
+        def.id,
+        def.display_name,
         static_cast<double>(position.x),
         static_cast<double>(position.y),
         static_cast<double>(position.z),
@@ -1507,33 +1550,39 @@ flecs::entity spawn_npc_ship(
     flecs::world&    world,
     const glm::vec3& position,
     u32              faction_id,
-    const char*      name)
+    const char*      name,
+    const char*      ship_id)
 {
+    // P3-01: same ShipDef pipeline as the player; NPC hulls just skip the
+    // player-only bits (ThrusterSet/WeaponMountSet/FlightControl — movement AI
+    // is P2-12/future).
+    const ShipDef def = resolve_ship_def(world, ship_id, kDefaultNpcShipId);
+
     RigidBody6DOF rb{};
     rb.position     = position;
-    rb.mass         = kShipMassKg;
-    rb.inertia_diag = glm::vec3{180000.f, 220000.f, 90000.f};
+    rb.mass         = def.mass_kg;
+    rb.inertia_diag = def.inertia_diag;
 
     PowerPlant plant{};
-    plant.output_rate = 350.f;
-    plant.capacity    = 900.f;
-    plant.stored      = 900.f;
+    plant.output_rate = def.power_output;
+    plant.capacity    = def.power_capacity;
+    plant.stored      = def.power_capacity;
 
     ShieldGenerator shield{};
-    shield.max_capacity = 350.f;
-    shield.current      = 350.f;
-    shield.regen_rate   = 25.f;
+    shield.max_capacity = def.shield_capacity;
+    shield.current      = def.shield_capacity;
+    shield.regen_rate   = def.shield_regen;
+    shield.power_draw   = def.shield_power_draw;
 
     ShipHull hull{};
-    hull.max_hp = 600.f;
-    hull.hp     = 600.f;
-    hull.radius = 3.5f;
+    hull.max_hp = def.hull_hp;
+    hull.hp     = def.hull_hp;
+    hull.radius = def.hull_radius;
 
     ShipSubsystems subsystems{};
-    subsystems.items[combat::subsystem_index(combat::Subsystem::Engines)] = {200.f, 200.f};
-    subsystems.items[combat::subsystem_index(combat::Subsystem::Shields)] = {160.f, 160.f};
-    subsystems.items[combat::subsystem_index(combat::Subsystem::Weapons)] = {140.f, 140.f};
-    subsystems.items[combat::subsystem_index(combat::Subsystem::Sensors)] = {100.f, 100.f};
+    for (u32 i = 0; i < combat::kSubsystemCount; ++i) {
+        subsystems.items[i] = {def.subsystem_hp[i], def.subsystem_hp[i]};
+    }
 
     const ecs::Position pos{position.x, position.y, position.z};
 
@@ -1543,19 +1592,21 @@ flecs::entity spawn_npc_ship(
                              .set<ShieldGenerator>(shield)
                              .set<ShipHull>(hull)
                              .set<ShipSubsystems>(subsystems)
+                             .set<ShipSpec>(ShipSpec{def.max_torque_nm})
                              .set<ai::FactionMember>({faction_id})
                              .set<ecs::Position>(pos)
                              .set<ecs::PreviousPosition>({pos.x, pos.y, pos.z})
                              .set<ecs::Velocity>({0.f, 0.f, 0.f})
                              .set<ecs::Orientation>({rb.orientation})
-                             .set<ecs::Scale>({2.2f})
+                             .set<ecs::Scale>({def.render_scale})
                              .add<ecs::InstanceTag>()
                              .add<ecs::KinematicFromRigidBody>();
 
     log::log_info(
         log::LogCategory::Game,
-        "Spawned NPC ship '%s' faction=%u at (%.0f, %.0f, %.0f)",
+        "Spawned NPC ship '%s' (%s) faction=%u at (%.0f, %.0f, %.0f)",
         name,
+        def.id,
         faction_id,
         static_cast<double>(position.x),
         static_cast<double>(position.y),

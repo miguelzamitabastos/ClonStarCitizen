@@ -262,7 +262,11 @@ void map_flight_control_to_thrusters(
     const glm::vec3&     body_linear_vel,
     ThrusterSet&         thrusters);
 
-[[nodiscard]] flecs::entity spawn_player_ship(flecs::world& world, const glm::vec3& position);
+/// P3-01: `ship_id` names a ShipDef in the ship catalog (assets/data/ships.cfg).
+/// nullptr → kDefaultPlayerShipId. An unknown id / missing catalog logs a
+/// warning and falls back to the built-in ShipDef defaults.
+[[nodiscard]] flecs::entity spawn_player_ship(
+    flecs::world& world, const glm::vec3& position, const char* ship_id = nullptr);
 
 [[nodiscard]] flecs::entity spawn_damage_target(
     flecs::world& world, const glm::vec3& position, f32 scale = 4.f);
@@ -287,11 +291,14 @@ void map_flight_control_to_thrusters(
 
 /// NPC ship platform: RigidBody + hull/shield/power/subsystems (P2-02) but no
 /// player control. Movement AI arrives with encounters (P2-12).
+/// P3-01: `ship_id` names a ShipDef (nullptr → kDefaultNpcShipId); unknown id /
+/// missing catalog falls back to the built-in ShipDef defaults.
 [[nodiscard]] flecs::entity spawn_npc_ship(
     flecs::world&    world,
     const glm::vec3& position,
     u32              faction_id,
-    const char*      name);
+    const char*      name,
+    const char*      ship_id = nullptr);
 
 /// Pre-spawn inactive projectile entities into ProjectilePool singleton (level load).
 void spawn_projectile_pool(flecs::world& world);

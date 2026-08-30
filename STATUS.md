@@ -1,6 +1,6 @@
 # STATUS
 
-## Fase activa: Fase 3 — Expansión de Contenido — **ABIERTA (0/9)**
+## Fase activa: Fase 3 — Expansión de Contenido — **EN CURSO (1/9)**
 
 Fase 2 validada físicamente por Miguel el 2026-08-30 (probó las 5 escenas de
 `.claude/VERIFICACION-PENDIENTE.md` a mano; solo se ven cuadros porque aún no hay
@@ -18,10 +18,10 @@ es Fase 4). El riesgo explícito de la fase: que se hardcodee contenido en C++ p
 velocidad. Objetivo contrario: añadir una nave / un arma / una misión = editar un
 archivo de datos, nunca tocar el motor.
 
-### Progreso Fase 3 — 0/9
+### Progreso Fase 3 — 1/9
 
-- Pipeline de datos (P3-01, P3-05, P3-08):       [ ] 0/3
-  - [ ] P3-01 Pipeline de datos de nave: stats (masa, empuje, hardpoints, capacidad
+- Pipeline de datos (P3-01, P3-05, P3-08):       [#] 1/3
+  - [x] P3-01 Pipeline de datos de nave: stats (masa, empuje, hardpoints, capacidad
         de carga) en archivos de configuración, no en código (dep. P1A-01, P0-05)
   - [ ] P3-05 Catálogo de armas/equipamiento dirigido por datos, mismo patrón que
         P3-01 (dep. P1A-08, P1B-06)
@@ -81,6 +81,41 @@ Bug latente conocido de baja probabilidad: cargar una partida guardada justo en
 la ventana de "muerto, esperando respawn" deja `Health.hp=0` sin `CharacterDead`.
 Pendiente de decidir si ese bump entra en Fase 3 (al tocar el pipeline de datos de
 naves) o se difiere a Fase 6 (pulido).
+
+### Decisiones Fase 3 (documentadas)
+
+1. **P3-01 pipeline de datos de nave:** catálogo `assets/data/ships.cfg` (secciones
+   `[[ship]]`, mismo parser de estilo que `commodities.cfg`/`mission_templates.cfg`)
+   → singleton `flight::ShipCatalog` de `ShipDef` POD (`kMaxShipDefs=16`, cero heap).
+   `id` es texto estable y único (`"ship.<rol>.<nombre>"`); id duplicado o ausente =
+   **carga marcada INVÁLIDA con `log_error`** (dos líneas de error claras), las
+   entradas válidas se conservan para que los spawns resuelvan. La comprobación
+   dura que bloquea build llega en P3-09 (`content_smoke_test`). El catálogo se
+   carga en `scene_setup_by_name` **antes** de `desc->setup(ctx)`, así que está vivo
+   para cualquier escena que spawnee una nave.
+   `spawn_player_ship`/`spawn_npc_ship` ganan un parámetro opcional `ship_id`
+   (`nullptr` → `kDefaultPlayerShipId` / `kDefaultNpcShipId`); id desconocido o
+   catálogo ausente → warning + `ShipDef{}` por defecto (cuyos valores reproducen
+   la nave hardcodeada de Fase 1/2, degradación sin romper nada). Todos los stats
+   de nave salen ahora del `ShipDef`: masa/inercia/escala (`RigidBody6DOF`,
+   `ecs::Scale`), empuje main/maniobra/retro (escalan la plantilla fija de
+   thrusters vía `build_thruster_set`), `max_torque_nm` (nuevo componente
+   `flight::ShipSpec` que el integrador lee de la entidad en vez de la constante
+   `kMaxTorqueNm`; sin `ShipSpec` → constante, para blancos de daño pelados),
+   HP de casco/escudo/planta, bancos de subsistemas P2-02, nº y offset de
+   hardpoints de arma (el arma montada sigue siendo la default de Fase 1/2 hasta
+   P3-05), hardpoints de torreta (solo colocación), y capacidad de bodega
+   (`economy::CargoHold`). `ships.cfg` arranca con solo los 2 ids que el motor
+   spawnea por defecto (valores idénticos a hoy → cero cambio de comportamiento);
+   las 4-6 naves distintas son P3-02.
+   **Fuera de alcance, anotado:** `ShipSpec` no se serializa en el save v1 (misma
+   deuda de schema que Fase 2). Hoy sin efecto observable (una sola nave de
+   jugador, su `max_torque_nm` == `kMaxTorqueNm`); P3-03 (poseer/cambiar de nave)
+   obliga a serializar el `id` de nave y a resolver esta deuda.
+   Verificado: build limpio (0 warnings) + smoke headless de las 7 escenas
+   (flight/on_foot/crew_turret/npc_combat/economy/universe/ui_audio) sin crash,
+   `CSC_SAVE_SMOKE=1` PASS, y test negativo (id duplicado inyectado → `log_error`
+   "duplicate ship id" + "catalog INVALID", sin crash).
 
 ## Fase 2 — Profundidad de Sistemas — **COMPLETADA y validada** (13/13, validación física 2026-08-30)
 
@@ -394,6 +429,18 @@ Cuando una entidad lleva `LocalToShip { ship_entity, local_position, local_orien
 5. Al salir (quitar `LocalToShip`), se bakea la pose mundial y la sim pasa a espacio mundo / GravityZone.
 
 ## Bitácora (más reciente arriba, una línea por tarea)
+- 2026-08-30 [P3-01] Pipeline de datos de nave: `assets/data/ships.cfg` (`[[ship]]`)
+  → singleton `flight::ShipCatalog`/`ShipDef` (POD, `kMaxShipDefs=16`, sin heap),
+  cargado en `scene_setup_by_name` antes del setup de escena. `spawn_player_ship`/
+  `spawn_npc_ship` toman `ship_id` opcional y construyen TODOS los componentes
+  (masa/inercia, empuje ×3, `max_torque_nm` vía nuevo `ShipSpec` que lee el
+  integrador, casco/escudo/planta, subsistemas P2-02, hardpoints de arma/torreta,
+  bodega) desde el `ShipDef`. Id de texto único; duplicado/ausente = carga
+  `log_error` INVÁLIDA (la comprobación dura es P3-09). `ships.cfg` con 2 ids
+  (valores == naves hardcodeadas Fase 1/2 → cero cambio de comportamiento); las
+  4-6 naves distintas son P3-02. `ShipSpec` no se serializa aún (deuda de schema
+  Fase 2; P3-03 la fuerza). Verificado: build limpio 0 warnings + 7 escenas
+  headless sin crash + `CSC_SAVE_SMOKE=1` PASS + test negativo id duplicado.
 - 2026-08-30 [Fase 2 → Fase 3] Miguel valida físicamente las 5 escenas de
   `.claude/VERIFICACION-PENDIENTE.md` (solo cuadros, sin assets de arte todavía —
   esperado por el roadmap). **Fase 2 CERRADA formalmente (13/13).** Abierta Fase 3
