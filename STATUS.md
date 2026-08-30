@@ -1,30 +1,99 @@
 # STATUS
 
-## Fase activa: Fase 3 — Expansión de Contenido — **9/9 IMPLEMENTADA, PARADA: validación física pendiente**
+## Fase activa: Fase 4 — Universo Procedural — **ABIERTA (0/8)**
 
-Las 9 tareas (P3-01..09) están implementadas y verificadas headless (build limpio
-+ `content_smoke_test` PASS + smokes por escena). **No se abre Fase 4 hasta el OK
-explícito de Miguel** tras probar a mano — mismo criterio que cerró Fases 0/1/2.
-Lista de verificación manual: `.claude/VERIFICACION-PENDIENTE.md` (regenerado para
-Fase 3) / mensaje de cierre de la sesión.
+Fase 3 validada físicamente por Miguel el 2026-08-30 (probó las 6 secciones de
+`.claude/VERIFICACION-PENDIENTE.md` a mano: `content_smoke_test`, naves/armas por
+datos con `--ship=`, hangar + taquillas de traje, protección/EVA con `--suit=`,
+localizaciones pobladas + arco "Ashfall Line", y regresión de Fases 1/2 — todo
+marcado OK). Con eso se cierra formalmente Fase 3 (9/9) y se abre Fase 4 según
+[[10-FASE-4-UNIVERSO-PROCEDURAL]]
+(`docs/roadmap/files/10-FASE-4-UNIVERSO-PROCEDURAL.md`).
 
-Fase 2 validada físicamente por Miguel el 2026-08-30 (probó las 5 escenas de
-`.claude/VERIFICACION-PENDIENTE.md` a mano; solo se ven cuadros porque aún no hay
-assets de arte, coherente con las fases del roadmap — sin bloqueo). Con eso se
-cerró formalmente Fase 2 (13/13) y se abrió Fase 3 según
-[[09-FASE-3-EXPANSION-DE-CONTENIDO]]
-(`docs/roadmap/files/09-FASE-3-EXPANSION-DE-CONTENIDO.md`).
+### Objetivo de Fase 4
 
-### Objetivo de Fase 3
+Reemplazar la simplificación deliberada de Fase 1D (universo fijo, zonas de
+aterrizaje prefabricadas y finitas) por generación real: terreno planetario
+esférico procedural con streaming por LOD, más de un sistema estelar navegable, y
+suficiente contenido curado insertado sobre lo procedural para que no se sienta
+vacío. El sistema fijo de Fase 1 pasa a ser un caso particular (semilla fija) del
+generador, no se descarta. Es la fase técnicamente más exigente después de Fase 0.
 
-Catálogo de naves y equipamiento **dirigido por datos**, poder comprar/poseer
-naves distintas, estaciones/ciudades más grandes y pobladas, y más contenido de
-misiones — todo dentro del sistema estelar fijo de Fase 1D (ampliar el universo
-es Fase 4). El riesgo explícito de la fase: que se hardcodee contenido en C++ por
-velocidad. Objetivo contrario: añadir una nave / un arma / una misión = editar un
-archivo de datos, nunca tocar el motor.
+### Progreso Fase 4 — 0/8
 
-### Progreso Fase 3 — 9/9 (implementadas, pendientes de validación física)
+- [ ] P4-01 Algoritmo de generación de sistema estelar (semilla → estrella,
+      planetas, órbitas) (dep. P1D-02)
+- [ ] P4-02 Generación procedural de terreno planetario (heightmap por ruido,
+      esférico) (dep. —)
+- [ ] P4-03 Streaming de terreno por chunks con LOD (extiende el streaming de
+      P1D-03) (dep. P4-02, P1D-03)
+- [ ] P4-04 Migración del sistema fijo actual a semilla fija del generador (no
+      perder contenido) (dep. P4-01)
+- [ ] P4-05 Navegación entre sistemas (jump points o equivalente) + mapa de
+      galaxia simplificado (dep. P4-01)
+- [ ] P4-06 Distribución procedural de recursos minables (asteroides/superficie)
+      (dep. P4-02)
+- [ ] P4-07 Inserción de puntos de interés curados sobre el terreno procedural
+      (estaciones, POIs a mano) (dep. P4-02, P3-04)
+- [ ] P4-08 Escena demo `procedural_test`: viaje entre dos sistemas generados +
+      aterrizaje en terreno real (dep. P4-01..07)
+
+### Restricciones de arquitectura de Fase 4 (del roadmap, vinculantes)
+
+1. **Todo lo generado es determinista por semilla.** El mismo seed → el mismo
+   sistema/planeta/terreno, en cualquier máquina y sesión. Es lo que permite
+   guardar (Fase 1F) sin serializar el terreno: se guarda semilla + lista de
+   deltas respecto a lo generado (ej. recursos ya minados).
+2. **Terreno por chunks = pool de tamaño fijo** (`Pool<TerrainChunk,
+   kMaxLoadedChunks>`), nunca contenedores que crezcan sin límite. Si el jugador
+   va más rápido de lo que carga el streaming, se degrada el LOD lejano antes que
+   exceder la capacidad reservada.
+3. **Generación de chunk en hilo de fondo** (extiende el pipeline async de
+   P0-07/P1D-03), escribiendo a buffer reservado; la subida a GPU ocurre en el
+   hilo principal, igual que el resto de cargas de malla.
+4. **Revisar el umbral de floating origin (P1D-07)** explícitamente a distancias
+   planetarias/interplanetarias reales; si no aguanta, ajustarlo aquí y
+   documentar el cambio — no dejarlo "porque ya funcionaba" en el sistema pequeño.
+5. **P4-05 salto entre sistemas** puede ser una transición de carga (descargar
+   sistema actual, cargar destino), no simulación continua de viaje interestelar.
+6. **P4-06 minería reutiliza `CargoHold`/economía de P1C** — minar = obtener un
+   commodity (igual que comprarlo, distinta fuente), no un sistema paralelo.
+7. Sigue vigente `.cursorrules`: DOD/ECS estricto, cero heap en Update/Render,
+   pools/arenas pre-asignados, GLM vía `include/engine/math/glm.hpp`.
+
+### Definition of Done de Fase 4 (del roadmap)
+
+- `procedural_test` genera dos sistemas estelares distintos de dos semillas
+  distintas, con terreno planetario navegable en al menos uno, y permite viajar
+  de uno a otro.
+- Recargar el mismo seed produce exactamente el mismo sistema/terreno (hash de
+  chunks generados o inspección visual reproducible).
+- El streaming de terreno mantiene el framerate objetivo de Fase 0 sin pausas
+  perceptibles al moverse rápido sobre la superficie (overlay de P0-11).
+
+### Deuda de schema del save arrastrada a Fase 4 (decidir al empezar el generador)
+
+No serializados aún en el save v1: `ShipSpec` (P3-01), `ShipOwnership` (P3-03),
+`Suit` (P3-06), más los de Fase 2 (`ShipSubsystems`, `DamageEvent.zone`/
+`CharacterDead`/`RespawnTimer`/`SpawnPoint`, `CompletedMissions`, `CrewMember`).
+Fase 4 introduce su propio formato de persistencia (semilla + deltas de terreno),
+así que es el momento natural de hacer **un único** bump de `schema_version` que
+junte todo esto. Bug latente conocido de baja probabilidad: cargar en la ventana
+"muerto, esperando respawn" deja `Health.hp=0` sin `CharacterDead`.
+
+---
+
+## Fase 3 — Expansión de Contenido — **COMPLETADA y validada** (9/9, validación física 2026-08-30)
+
+Todo el contenido de la fase vive en `assets/data/*.cfg` (naves, armas, trajes,
+misiones, localizaciones); ningún `.cpp`/`.hpp` se tocó para el contenido, solo
+para el pipeline que lo lee. `content_smoke_test` (escena + `CONTENT_SMOKE: PASS`)
+carga todo el catálogo por los loaders reales y valida integridad; el gemelo sin
+build es `tools/validate_catalogs.py` (P3-08). Escenas nuevas: `ship_hangar_test`
+(P3-03/P3-06), `content_smoke_test` (P3-09). Flags nuevos: `--ship=<id>` (P3-02),
+`--suit=<id>` (P3-06). Decisiones completas 1-9 abajo.
+
+### Progreso Fase 3 — 9/9 COMPLETADO
 
 - Pipeline de datos (P3-01, P3-05, P3-08):       [###] 3/3
   - [x] P3-01 Pipeline de datos de nave: stats (masa, empuje, hardpoints, capacidad
@@ -72,9 +141,9 @@ archivo de datos, nunca tocar el motor.
   localizaciones + commodities + mercados + misiones) sin errores de validación y
   reporta el resumen por tipo en consola (`CONTENT_SMOKE: PASS`, escena
   `--scene=content_smoke_test`). P3-09.
-- ⏳ El jugador puede comprar al menos **dos naves distintas** del catálogo en el
-  hangar (`ship_hangar_test`) y pilotarlas con diferencias perceptibles — cableado
-  y probado headless; **falta la validación física de Miguel**.
+- ✅ El jugador puede comprar al menos **dos naves distintas** del catálogo en el
+  hangar (`ship_hangar_test`) y pilotarlas con diferencias perceptibles — validado
+  físicamente por Miguel el 2026-08-30 (Wasp / Mule / Kestrel).
 - ✅ Añadir contenido nuevo (nave / arma / suit / misión / localización) se hace
   **solo** editando el `.cfg` correspondiente. Probado en la práctica en P3-02
   (4 hulls), P3-05 (3 armas), P3-06 (4 suits), P3-07 (7 misiones), P3-04 (Outpost C
@@ -673,6 +742,17 @@ Cuando una entidad lleva `LocalToShip { ship_entity, local_position, local_orien
 5. Al salir (quitar `LocalToShip`), se bakea la pose mundial y la sim pasa a espacio mundo / GravityZone.
 
 ## Bitácora (más reciente arriba, una línea por tarea)
+- 2026-08-30 [Fase 3 → Fase 4] Miguel valida físicamente las 6 secciones de
+  `.claude/VERIFICACION-PENDIENTE.md` (content_smoke, `--ship=`, hangar +
+  taquillas, `--suit=`, Outpost C + arco Ashfall, regresión Fases 1/2 — todo OK).
+  **Fase 3 CERRADA formalmente (9/9).** Abierta Fase 4 — Universo Procedural:
+  8 tareas (P4-01..08), eje = terreno planetario procedural + streaming por LOD +
+  multi-sistema, todo determinista por semilla. Objetivo, restricciones y DoD
+  arriba en "Fase activa". Deuda de schema del save (P3-01/03/06 + Fase 2) se
+  resuelve en el bump que traiga el formato semilla+deltas de Fase 4.
+  Checklist consumido — `.claude/VERIFICACION-PENDIENTE.md` eliminado. Push de los
+  10 commits de Fase 3 a `origin/main` (fast-forward, sin divergencia con Cursor
+  Cloud).
 - 2026-08-30 [P3-09 → Fase 3 9/9] `content_smoke_test`: nuevo módulo
   `game/content_smoke.{hpp,cpp}` + escena `content_smoke_test` que carga TODO el
   catálogo por los loaders reales del motor y valida integridad — resumen por tipo
