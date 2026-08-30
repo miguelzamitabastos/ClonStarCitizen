@@ -5,6 +5,7 @@
 #include "game/audio/audio.hpp"
 #include "game/character/character.hpp"
 #include "game/economy/economy.hpp"
+#include "game/economy/location_catalog.hpp"
 #include "game/flight/flight.hpp"
 #include "game/flight/ship_catalog.hpp"
 #include "game/flight/weapon_catalog.hpp"
@@ -748,9 +749,10 @@ bool scene_setup_by_name(const char* name, SceneContext& ctx)
     // Content catalogs must be live before any scene spawns a ship or turret.
     // Weapons first so the ship↔weapon reference check (P3-05) can run.
     if (ctx.world != nullptr) {
-        (void)game::flight::load_weapon_catalog(*ctx.world); // P3-05
-        (void)game::flight::load_ship_catalog(*ctx.world);   // P3-01
+        (void)game::flight::load_weapon_catalog(*ctx.world);    // P3-05
+        (void)game::flight::load_ship_catalog(*ctx.world);      // P3-01
         (void)game::flight::validate_ship_weapon_refs(*ctx.world);
+        (void)game::economy::load_location_catalog(*ctx.world); // P3-04
     }
 
     return desc->setup(ctx);

@@ -1,6 +1,6 @@
 # STATUS
 
-## Fase activa: Fase 3 — Expansión de Contenido — **EN CURSO (5/9)**
+## Fase activa: Fase 3 — Expansión de Contenido — **EN CURSO (6/9)**
 
 Fase 2 validada físicamente por Miguel el 2026-08-30 (probó las 5 escenas de
 `.claude/VERIFICACION-PENDIENTE.md` a mano; solo se ven cuadros porque aún no hay
@@ -18,7 +18,7 @@ es Fase 4). El riesgo explícito de la fase: que se hardcodee contenido en C++ p
 velocidad. Objetivo contrario: añadir una nave / un arma / una misión = editar un
 archivo de datos, nunca tocar el motor.
 
-### Progreso Fase 3 — 5/9
+### Progreso Fase 3 — 6/9
 
 - Pipeline de datos (P3-01, P3-05, P3-08):       [###] 3/3
   - [x] P3-01 Pipeline de datos de nave: stats (masa, empuje, hardpoints, capacidad
@@ -32,8 +32,8 @@ archivo de datos, nunca tocar el motor.
         multipropósito) usando P3-01 (dep. P3-01)
   - [x] P3-03 Hangar y tienda de naves: comprar/vender/cambiar de nave activa,
         reutilizando las transacciones de P1C-03 tal cual (dep. P3-02, P1C-03)
-- Mundo y personaje (P3-04, P3-06):              [ ] 0/2
-  - [ ] P3-04 Expansión de estaciones/ciudades: más NPCs, tiendas y dadores de
+- Mundo y personaje (P3-04, P3-06):              [#] 1/2
+  - [x] P3-04 Expansión de estaciones/ciudades: más NPCs, tiendas y dadores de
         misión por localización (dep. P1D-05, P1C-06)
   - [ ] P3-06 Personalización básica de personaje: trajes/armadura con stats
         (protección, capacidad EVA) (dep. P1B-01, P3-05)
@@ -220,6 +220,41 @@ naves) o se difiere a Fase 6 (pulido).
    5 fallos inyectados (id de nave duplicado, `weapon_id` colgante, arma default
    ausente, misión→mercado inexistente, commodity id no contiguo) los detecta
    todos con exit 1.
+
+6. **P3-04 población de localizaciones dirigida por datos:** `assets/data/locations.cfg`
+   (`[[location]]` + lista `npc.N.*`) → singleton `economy::LocationCatalog` de
+   `LocationDef` POD (`kMaxLocationDefs=12`, `kMaxLocationNpcs=16`, sin heap).
+   **Reparto de responsabilidades:** la escena decide DÓNDE va cada localización
+   (su origen en el mundo, vía una tabla `LocationPlacement`); el `.cfg` decide QUÉ
+   la puebla (traders / dadores de misión / turn-in / travel pads). `id` de texto
+   único (`"loc.<nombre>"`); duplicado/ausente = carga `log_error` INVÁLIDA.
+   `economy::populate_locations(world, placements, n)` recorre las localizaciones
+   colocadas, spawnea sus NPCs con `spawn_trader_npc`/`spawn_mission_npc`/
+   `spawn_travel_pad` (P1C-06, reutilizados tal cual) en `origen + npc.offset`, y
+   con `gravity_deck=1` añade la zona de gravedad + marcador de cubierta. Los
+   `travel_pad` referencian el destino **por id de localización** (`npc.N.dest`),
+   resuelto contra la tabla de placements → `destino.origen + kLocationArrivalOffset`
+   (`{0,0.9,1.5}`, igual que los pads a mano de P1C) y el `location_id` entero del
+   destino (para `mark_visit_missions`).
+   `setup_economy_test_scene` pierde ~120 líneas de `spawn_*` a mano: ahora coloca
+   3 localizaciones y llama a `populate_locations`. `loc.market-a` (5 NPCs) y
+   `loc.market-b` (8 NPCs) **reproducen exactamente** el set de P1C/P2-09/P2-10
+   (mismos market/template/flags/offsets) → cero cambio en la coreografía de ramas.
+   Expansión P3-04: **`loc.outpost-c`** (5 NPCs) — nuevo `MarketC` (id=2) en
+   `markets.cfg` (fab de electrónica: electrónica barata, compra mineral), 2
+   traders + un dador de misión "Scout Contract" (template 1) + pads a A y B; A y B
+   ganan cada uno un pad "Travel -> C". `spawn_market_marker` (estático, ahora sin
+   uso) eliminado de `economy.cpp`.
+   El catálogo se carga en `scene_setup_by_name` junto a los de nave/arma;
+   `validate_catalogs.py` (P3-08) gana los chequeos de `locations.cfg` (kinds
+   válidos, `market`/`commodity`/`template` resolubles, `dest` de travel pad es
+   una localización conocida). Las estaciones del sistema fijo (`universe_test`)
+   siguen sin poblar — ese escenario es ShipPilot sin personaje a pie, poblarlas no
+   sería interactuable; queda para cuando haya modo a pie allí.
+   Verificado: build limpio (0 warnings) + 10 escenas headless (economy_test
+   pobla 3 localizaciones / 18 NPCs sin crash) + `CSC_SAVE_SMOKE`/`CSC_HANGAR_SMOKE`
+   PASS + `validate_catalogs.py` OK + test negativo (`dest` colgante y `market`
+   inexistente en `locations.cfg` → 2 `ERROR`, exit 1).
 
 ## Fase 2 — Profundidad de Sistemas — **COMPLETADA y validada** (13/13, validación física 2026-08-30)
 
@@ -473,7 +508,7 @@ demo (`flight_test`, `on_foot_test`, `economy_test`, `universe_test`, `ui_audio_
 | `grid_freelook` / `instancing_stress` / `mesh_viewer` | Fase 0 OK |
 | `flight_test` | P1A OK — nave + objetivo a 50m |
 | `on_foot_test` | P1B OK — interior LocalToShip → hatch EVA → estación + FPS target |
-| `economy_test` | P1C OK — MarketA cheap ore → TravelPad → MarketB sell/turn-in |
+| `economy_test` | P1C/P3-04 — 3 localizaciones pobladas desde `locations.cfg` (MarketA/B + Outpost C) |
 | `universe_test` | P1D OK — Estacion-Alfa → espacio (rebase ≥1) → Planeta-01-LZ |
 | `ui_audio_test` | P1E OK — HUD Both, Esc pause, 3 positional sine tones (synthetic PCM) |
 | `save_load_test` | P1F OK — F5/F9 + pause Save/Load; CSC_SAVE_SMOKE |
@@ -534,6 +569,22 @@ Cuando una entidad lleva `LocalToShip { ship_entity, local_position, local_orien
 5. Al salir (quitar `LocalToShip`), se bakea la pose mundial y la sim pasa a espacio mundo / GravityZone.
 
 ## Bitácora (más reciente arriba, una línea por tarea)
+- 2026-08-30 [P3-04] Población de localizaciones por datos: `assets/data/locations.cfg`
+  (`[[location]]` + `npc.N.*`) → `economy::LocationCatalog`; la escena coloca cada
+  localización (tabla `LocationPlacement`), el `.cfg` la puebla.
+  `economy::populate_locations` spawnea traders/dadores/turn-in/travel-pads
+  (`spawn_*` de P1C-06 tal cual) + zona de gravedad y cubierta con `gravity_deck`.
+  Travel pads referencian destino por id de localización. `setup_economy_test_scene`
+  pierde ~120 líneas a mano: coloca 3 localizaciones y llama a `populate_locations`;
+  `loc.market-a`/`loc.market-b` reproducen exactamente el set de P1C/P2-09/P2-10;
+  `loc.outpost-c` es la expansión (nuevo `MarketC` id=2 en `markets.cfg`, 2 traders
+  + "Scout Contract" + pads a A/B, y A/B ganan pad a C). `validate_catalogs.py`
+  gana chequeos de `locations.cfg`. `universe_test` sigue sin poblar (ShipPilot, sin
+  a pie). Verificado: build 0 warnings + 10 escenas headless (economy_test: 3
+  localizaciones / 18 NPCs) + `CSC_SAVE_SMOKE`/`CSC_HANGAR_SMOKE` PASS + validador
+  OK + test negativo. **Verificación manual pendiente de Miguel:** recorrer las 3
+  localizaciones de `economy_test`, comprobar que las tiendas/misiones/pads nuevos
+  funcionan y que el flujo P2-09/P2-10 sigue igual.
 - 2026-08-30 [P3-08] Validador de catálogos: `tools/validate_catalogs.py` (Python 3,
   solo stdlib, sin build). Recorre `assets/data/*.cfg` y corre las validaciones de
   P3-09: ids únicos, `weapon_id_N` de nave resuelve en `weapons.cfg`, ids del motor

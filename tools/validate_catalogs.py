@@ -33,6 +33,9 @@ MAX_COMMODITIES = 16
 MAX_MARKETS = 8
 MAX_MISSION_TEMPLATES = 16
 NUM_FACTIONS = 4
+MAX_LOCATION_DEFS = 12
+MAX_LOCATION_NPCS = 16
+LOCATION_NPC_KINDS = {"trader", "mission_giver", "turn_in", "travel_pad"}
 
 DEFAULT_SHIP_WEAPON_ID = "weapon.fixed.repeater"
 DEFAULT_TURRET_WEAPON_ID = "weapon.turret.repeater"
@@ -297,6 +300,64 @@ def validate_missions(path: Path, commodities, markets, report: Report) -> dict[
     return by_id
 
 
+def validate_locations(path: Path, markets, commodities, missions, report: Report) -> dict[str, Entry]:
+    entries = parse_cfg(path, report)
+    locs = check_unique_ids(entries, "location", path.name, report, cap=MAX_LOCATION_DEFS)
+    for lid, e in locs.items():
+        where = f"{path.name}:{e.line}"
+        if not lid.startswith("loc."):
+            report.warn(where, f"id {lid!r} does not follow 'loc.<name>'")
+        as_int(e, "location_id", where, report)
+        # Gather npc.N.* fields into per-index dicts.
+        npcs: dict[int, dict[str, str]] = {}
+        for key, val in e.fields.items():
+            if not key.startswith("npc."):
+                continue
+            rest = key[4:]
+            num, _, field = rest.partition(".")
+            try:
+                idx = int(num)
+            except ValueError:
+                report.error(where, f"bad npc key {key!r}")
+                continue
+            if idx >= MAX_LOCATION_NPCS:
+                report.error(where, f"npc index {idx} >= cap {MAX_LOCATION_NPCS}")
+                continue
+            npcs.setdefault(idx, {})[field] = val
+        for idx, fields in sorted(npcs.items()):
+            nwhere = f"{where} npc.{idx}"
+            kind = fields.get("kind", "")
+            if kind not in LOCATION_NPC_KINDS:
+                report.error(nwhere, f"kind={kind!r} not in {sorted(LOCATION_NPC_KINDS)}")
+            if "offset" in fields and len(fields["offset"].split(",")) != 3:
+                report.error(nwhere, "offset must be 'x,y,z' (3 values)")
+            if kind == "trader":
+                try:
+                    mk = int(fields.get("market", ""))
+                    if markets and mk not in markets:
+                        report.error(nwhere, f"market {mk} does not exist")
+                except ValueError:
+                    report.error(nwhere, "trader needs a numeric market")
+                try:
+                    cm = int(fields.get("commodity", ""))
+                    if commodities and cm not in commodities:
+                        report.error(nwhere, f"commodity {cm} does not exist")
+                except ValueError:
+                    report.error(nwhere, "trader needs a numeric commodity")
+            elif kind in ("mission_giver", "turn_in"):
+                try:
+                    tp = int(fields.get("template", ""))
+                    if missions and tp not in missions:
+                        report.error(nwhere, f"template {tp} does not exist")
+                except ValueError:
+                    report.error(nwhere, f"{kind} needs a numeric template")
+            elif kind == "travel_pad":
+                dest = fields.get("dest", "")
+                if dest not in locs:
+                    report.error(nwhere, f"dest {dest!r} is not a location id")
+    return locs
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -318,6 +379,8 @@ def main() -> int:
     markets = validate_markets(data_dir / "markets.cfg", commodities, report)
     missions = validate_missions(data_dir / "mission_templates.cfg",
                                  commodities, markets, report)
+    locations = validate_locations(data_dir / "locations.cfg",
+                                   markets, commodities, missions, report)
 
     if not args.quiet:
         print(f"catalogs in {data_dir}:")
@@ -326,6 +389,7 @@ def main() -> int:
         print(f"  commodities .. {len(commodities):3d}")
         print(f"  markets ...... {len(markets):3d}")
         print(f"  missions ..... {len(missions):3d}")
+        print(f"  locations .... {len(locations):3d}")
         for w in report.warnings:
             print(f"WARN  {w}")
 

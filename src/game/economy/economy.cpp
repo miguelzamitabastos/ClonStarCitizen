@@ -4,6 +4,7 @@
 #include "engine/log/log.hpp"
 #include "game/ai/ai.hpp"
 #include "game/character/character.hpp"
+#include "game/economy/location_catalog.hpp"
 #include "game/flight/flight.hpp"
 
 #include <cmath>
@@ -735,18 +736,6 @@ void spawn_mission_encounter(
         m.type == MissionType::Escort ? " + escort target" : "");
 }
 
-void spawn_market_marker(
-    flecs::world& world, const char* name, const glm::vec3& center, f32 scale)
-{
-    const ecs::Position pos{center.x, center.y, center.z};
-    world.entity(name)
-        .set<ecs::Position>(pos)
-        .set<ecs::PreviousPosition>({pos.x, pos.y, pos.z})
-        .set<ecs::Velocity>({0.f, 0.f, 0.f})
-        .set<ecs::Scale>({scale})
-        .add<ecs::InstanceTag>();
-}
-
 }  // namespace
 
 f32 market_unit_price(const Commodity& commodity, const Market& market, u32 commodity_id)
@@ -1465,26 +1454,13 @@ bool setup_economy_test_scene(flecs::world& world, f32 aspect)
 
     flight::spawn_projectile_pool(world);
 
+    // P3-04: locations + their NPCs / shops / mission givers come from
+    // assets/data/locations.cfg. The scene only places each location in the
+    // world; loc.market-a / loc.market-b reproduce the Fase 1C/2 hand-placed
+    // set exactly, loc.outpost-c is the new populated stop.
     constexpr glm::vec3 kMarketA{0.f, 0.f, 0.f};
     constexpr glm::vec3 kMarketB{70.f, 0.f, 0.f};
-
-    (void)character::spawn_gravity_zone_box(
-        world,
-        kMarketA + glm::vec3{0.f, 2.f, 0.f},
-        glm::vec3{14.f, 6.f, 14.f},
-        glm::vec3{0.f, -1.f, 0.f},
-        character::kGravityDefault,
-        "MarketAGravity");
-    (void)character::spawn_gravity_zone_box(
-        world,
-        kMarketB + glm::vec3{0.f, 2.f, 0.f},
-        glm::vec3{14.f, 6.f, 14.f},
-        glm::vec3{0.f, -1.f, 0.f},
-        character::kGravityDefault,
-        "MarketBGravity");
-
-    spawn_market_marker(world, "MarketADeck", kMarketA + glm::vec3{0.f, 0.4f, 0.f}, 7.f);
-    spawn_market_marker(world, "MarketBDeck", kMarketB + glm::vec3{0.f, 0.4f, 0.f}, 7.f);
+    constexpr glm::vec3 kOutpostC{0.f, 0.f, -70.f};
 
     flecs::entity ship =
         flight::spawn_player_ship(world, kMarketA + glm::vec3{8.f, 5.f, 4.f});
@@ -1493,101 +1469,14 @@ bool setup_economy_test_scene(flecs::world& world, f32 aspect)
     (void)character::spawn_player_character(
         world, kMarketA + glm::vec3{0.f, 0.9f, 1.5f}, 0);
 
-    (void)spawn_trader_npc(
-        world,
-        kMarketA + glm::vec3{0.f, 1.2f, -1.5f},
-        0,
-        0,
-        true,
-        false,
-        "Buy Ore (A)");
-    (void)spawn_mission_npc(
-        world,
-        kMarketA + glm::vec3{-2.f, 1.2f, -1.5f},
-        0,
-        true,
-        false,
-        0,
-        "Accept Mission");
-    (void)spawn_travel_pad(
-        world,
-        kMarketA + glm::vec3{2.5f, 1.1f, 0.f},
-        kMarketB + glm::vec3{0.f, 0.9f, 1.5f},
-        1,
-        "Travel -> B");
-
-    (void)spawn_trader_npc(
-        world,
-        kMarketB + glm::vec3{0.f, 1.2f, -1.5f},
-        1,
-        0,
-        false,
-        true,
-        "Sell Ore (B)");
-    (void)spawn_mission_npc(
-        world,
-        kMarketB + glm::vec3{-2.f, 1.2f, -1.5f},
-        0,
-        false,
-        true,
-        1,
-        "Turn In Mission");
-    // P2-09: chained branch — unlocked only after OreDelivery (id=0) turns in
-    // above; accepting either permanently locks out the other (branch_group=1).
-    (void)spawn_mission_npc(
-        world,
-        kMarketB + glm::vec3{-4.f, 1.2f, -1.5f},
-        2,
-        true,
-        false,
-        1,
-        "Aid Colonists (branch A)");
-    (void)spawn_mission_npc(
-        world,
-        kMarketB + glm::vec3{-6.f, 1.2f, -1.5f},
-        3,
-        true,
-        false,
-        1,
-        "Security Run (branch B)");
-    // P2-10: combat/escort — always offerable (no prerequisite/branch). The
-    // encounter spawns right where the player is standing on accept, and the
-    // existing "Turn In Mission" NPC above (market_id=1) completes either —
-    // it matches by market, not by template.
-    (void)spawn_mission_npc(
-        world,
-        kMarketB + glm::vec3{-8.f, 1.2f, -1.5f},
-        4,
-        true,
-        false,
-        1,
-        "Clear Pirates");
-    (void)spawn_mission_npc(
-        world,
-        kMarketB + glm::vec3{-10.f, 1.2f, -1.5f},
-        5,
-        true,
-        false,
-        1,
-        "Escort Trader");
-    (void)spawn_travel_pad(
-        world,
-        kMarketB + glm::vec3{2.5f, 1.1f, 0.f},
-        kMarketA + glm::vec3{0.f, 0.9f, 1.5f},
-        0,
-        "Travel -> A");
-
-    // P2-09: turn-in point for whichever branch was chosen at MarketB
-    // (both templates 2/3 have to_market=0) — market_id, not template_id,
-    // is what mission_try_complete_at_market matches on.
-    (void)spawn_mission_npc(
-        world,
-        kMarketA + glm::vec3{-4.f, 1.2f, -1.5f},
-        0,
-        false,
-        true,
-        0,
-        "Turn In Branch Mission");
+    const LocationPlacement kPlacements[] = {
+        {"loc.market-a", kMarketA},
+        {"loc.market-b", kMarketB},
+        {"loc.outpost-c", kOutpostC},
+    };
+    populate_locations(
+        world, kPlacements,
+        static_cast<u32>(sizeof(kPlacements) / sizeof(kPlacements[0])));
 
     world.set<ecs::ControlMode>({ecs::ControlModeKind::OnFoot});
 
