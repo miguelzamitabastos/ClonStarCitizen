@@ -391,6 +391,11 @@ int main(int argc, char** argv)
 
         game::audio::frame_update(world, audio_engine);
 
+        // P4-08: per-scene frame hook (procedural_test terrain streaming).
+        if (scene_ctx.on_frame != nullptr && !game::ui::is_simulation_paused(world)) {
+            scene_ctx.on_frame(&vk_renderer, &vk_device, world, dt);
+        }
+
         if (!ecs::world_try_get_primary_camera(world, camera_scratch)) {
             log::log_error(log::LogCategory::Ecs, "Primary Camera3D missing; exiting.");
             break;
@@ -487,6 +492,9 @@ int main(int argc, char** argv)
         ++scratch.frame_index;
     }
 
+    if (scene_ctx.on_shutdown != nullptr) {
+        scene_ctx.on_shutdown();  // P4-08: join terrain worker before GPU teardown
+    }
     if (mesh_loader_started) {
         assets::mesh_loader_shutdown(mesh_loader);
     }

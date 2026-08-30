@@ -31,6 +31,14 @@ struct SceneContext {
     /// P4-05: galaxy node index for universe_test (from `--system=` / config).
     /// nullptr / empty = node 0 (home). Ignored when world_seed is set.
     const char*     galaxy_system = nullptr;
+    /// P4-08: optional per-frame hook, called by the main loop while the sim
+    /// runs. `renderer` / `device` are `vulkan::RendererState*` / `DeviceState*`
+    /// (opaque here to keep Vulkan out of most scene TUs). Used by
+    /// `procedural_test` to drive terrain streaming + GPU upload.
+    void (*on_frame)(void* renderer, void* device, flecs::world& world, f32 dt) = nullptr;
+    /// P4-08: optional teardown hook, called by the main loop on exit BEFORE the
+    /// renderer is destroyed (procedural_test joins its terrain worker here).
+    void (*on_shutdown)() = nullptr;
 };
 
 using SceneSetupFn = bool (*)(SceneContext& ctx);

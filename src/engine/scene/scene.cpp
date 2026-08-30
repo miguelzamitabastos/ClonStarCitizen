@@ -1,6 +1,8 @@
 #include "engine/scene/scene.hpp"
 
 #include "engine/log/log.hpp"
+#include "engine/vulkan/device.hpp"
+#include "engine/vulkan/renderer.hpp"
 #include "game/ai/ai.hpp"
 #include "game/audio/audio.hpp"
 #include "game/character/character.hpp"
@@ -749,6 +751,208 @@ bool setup_content_smoke_test(SceneContext& ctx)
     return true;
 }
 
+// --- P4-08: procedural_test — galaxy + generated system + streamed terrain ---
+
+struct ProceduralState {
+    game::world::TerrainStreamer     streamer{};
+    game::world::PlanetTerrainParams params{};
+    bool                             streamer_started = false;
+    char                             planet_name[64]{};
+    glm::vec3                        planet_pos{0.f};
+    bool                             slot_used[vulkan::kMaxTerrainDrawChunks]{};
+    vulkan::RendererState*           renderer = nullptr;
+    const vulkan::DeviceState*       device   = nullptr;
+};
+ProceduralState g_proc{};
+
+void proc_upload_cb(void* ctx, game::world::TerrainChunk& c)
+{
+    auto* p = static_cast<ProceduralState*>(ctx);
+    if (p->renderer == nullptr || p->device == nullptr || c.vert_count == 0) {
+        return;
+    }
+    u32 slot = vulkan::kMaxTerrainDrawChunks;
+    for (u32 i = 0; i < vulkan::kMaxTerrainDrawChunks; ++i) {
+        if (!p->slot_used[i]) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot == vulkan::kMaxTerrainDrawChunks) {
+        return;
+    }
+    assets::MeshCpu m{};
+    m.vertices     = c.verts;
+    m.indices      = c.indices;
+    m.vertex_count = c.vert_count;
+    m.index_count  = c.index_count;
+    if (vulkan::renderer_upload_terrain_chunk(*p->renderer, *p->device, slot, m)) {
+        p->slot_used[slot] = true;
+        c.gpu_handle       = slot;
+        if (p->streamer.uploads_done < 12u) {  // enough to see it working, not spam
+            log::log_info(
+                log::LogCategory::Vulkan,
+                "terrain chunk -> gpu slot %u (verts=%u idx=%u depth=%u)",
+                slot, c.vert_count, c.index_count, c.lod_depth);
+        }
+    }
+}
+
+void proc_retire_cb(void* ctx, game::world::TerrainChunk& c)
+{
+    auto* p = static_cast<ProceduralState*>(ctx);
+    if (p->renderer == nullptr || p->device == nullptr
+        || c.gpu_handle >= vulkan::kMaxTerrainDrawChunks) {
+        return;
+    }
+    vulkan::renderer_retire_terrain_chunk(*p->renderer, *p->device, c.gpu_handle);
+    p->slot_used[c.gpu_handle] = false;
+    c.gpu_handle               = 0xFFFFFFFFu;
+}
+
+void proc_on_frame(void* renderer, void* device, flecs::world& world, f32 /*dt*/)
+{
+    g_proc.renderer = static_cast<vulkan::RendererState*>(renderer);
+    g_proc.device   = static_cast<const vulkan::DeviceState*>(device);
+
+    if (!g_proc.streamer_started) {
+        game::world::terrain_streamer_init(
+            g_proc.streamer, g_proc.params, glm::vec3{0.f},
+            &proc_upload_cb, &proc_retire_cb, &g_proc);
+        g_proc.streamer_started = true;
+    }
+
+    // Current planet position (follows floating-origin rebases).
+    if (g_proc.planet_name[0] != '\0') {
+        const flecs::entity pe = world.lookup(g_proc.planet_name);
+        if (pe.is_alive()) {
+            if (const ecs::Position* pp = pe.try_get<ecs::Position>()) {
+                g_proc.planet_pos = glm::vec3{pp->x, pp->y, pp->z};
+            }
+        }
+    }
+
+    glm::vec3 player{0.f};
+    world.each([&](flecs::entity e, game::flight::RigidBody6DOF& rb) {
+        if (e.has<game::flight::PlayerShip>()) {
+            player = rb.position;
+        }
+    });
+
+    glm::mat4 model(1.f);
+    model[3] = glm::vec4(g_proc.planet_pos, 1.f);
+    vulkan::renderer_set_terrain_model(*g_proc.renderer, model);
+
+    game::world::terrain_streamer_update(g_proc.streamer, player - g_proc.planet_pos);
+}
+
+bool setup_procedural_test(SceneContext& ctx)
+{
+    if (ctx.world == nullptr) {
+        return false;
+    }
+
+    ecs::world_spawn_default_camera(*ctx.world, ctx.aspect);
+    ecs::world_spawn_default_grid(*ctx.world);
+    (void)game::economy::load_economy_data(*ctx.world);
+
+    game::world::GalaxyMap galaxy{};
+    game::world::generate_galaxy(
+        game::world::kDefaultGalaxySeed, game::world::kHomeSystemSeed, galaxy);
+    u32 node = 0;
+    if (ctx.galaxy_system != nullptr) {
+        node = static_cast<u32>(std::strtoul(ctx.galaxy_system, nullptr, 0));
+        if (node >= galaxy.count) {
+            node = 0;
+        }
+    }
+    galaxy.current = node;
+    game::world::galaxy_log(galaxy);
+    ctx.world->set<game::world::GalaxyMap>(galaxy);
+
+    game::world::StarSystemData system{};
+    csc::u64                    seed = game::world::kHomeSystemSeed;
+    if (ctx.world_seed != nullptr) {
+        seed = static_cast<csc::u64>(std::strtoull(ctx.world_seed, nullptr, 0));
+        (void)game::world::generate_star_system(seed, system);
+    } else if (node == 0) {
+        (void)game::world::load_star_system_config(system, "assets/data/star_system.cfg");
+    } else {
+        seed = galaxy.systems[node].seed;
+        (void)game::world::generate_star_system(seed, system);
+    }
+
+    (void)game::world::spawn_universe_test(*ctx.world, system, ctx.player_ship_id, seed);
+
+    // Stream terrain for the first Planet body. Re-derive its terrain params
+    // from the generator's per-body info (matched by position).
+    game::world::StarSystemData      gen{};
+    game::world::GeneratedSystemInfo info{};
+    (void)game::world::generate_star_system(seed, gen, &info);
+
+    // Reset (TerrainStreamer holds a thread/mutex — cannot be wholesale-assigned).
+    if (g_proc.streamer_started) {
+        game::world::terrain_streamer_shutdown(g_proc.streamer);
+        g_proc.streamer_started = false;
+    }
+    g_proc.renderer       = nullptr;
+    g_proc.device         = nullptr;
+    g_proc.planet_name[0] = '\0';
+    g_proc.planet_pos     = glm::vec3{0.f};
+    g_proc.params         = game::world::PlanetTerrainParams{};
+    for (bool& u : g_proc.slot_used) {
+        u = false;
+    }
+
+    for (u32 i = 0; i < system.body_count; ++i) {
+        if (system.bodies[i].type != game::world::CelestialBodyType::Planet) {
+            continue;
+        }
+        std::snprintf(g_proc.planet_name, sizeof(g_proc.planet_name), "%s", system.bodies[i].name);
+        g_proc.planet_pos = system.bodies[i].position;
+
+        csc::u64 body_seed = seed ^ (static_cast<csc::u64>(i + 1) * 0x9E3779B97F4A7C15ull);
+        bool     atmo      = true;
+        for (u32 k = 0; k < gen.body_count; ++k) {
+            if (gen.bodies[k].type == game::world::CelestialBodyType::Planet) {
+                const glm::vec3 d = gen.bodies[k].position - system.bodies[i].position;
+                if (glm::dot(d, d) < 1.f) {
+                    body_seed = info.bodies[k].body_seed;
+                    atmo      = info.bodies[k].has_atmosphere;
+                    break;
+                }
+            }
+        }
+        g_proc.params = game::world::planet_terrain_params(
+            body_seed, system.bodies[i].radius, atmo);
+        log::log_info(
+            log::LogCategory::Core,
+            "procedural_test: streaming terrain for '%s' (r=%.0f, elev=%.1f) at (%.0f, %.0f, %.0f)",
+            g_proc.planet_name, static_cast<double>(system.bodies[i].radius),
+            static_cast<double>(g_proc.params.elevation_scale),
+            static_cast<double>(g_proc.planet_pos.x),
+            static_cast<double>(g_proc.planet_pos.y),
+            static_cast<double>(g_proc.planet_pos.z));
+        break;
+    }
+
+    ctx.on_frame    = &proc_on_frame;
+    ctx.on_shutdown = [] {
+        if (g_proc.streamer_started) {
+            game::world::terrain_streamer_shutdown(g_proc.streamer);
+            g_proc.streamer_started = false;
+        }
+    };
+
+    ctx.needs_shared_mesh = true;
+    ctx.instance_count    = 24u + static_cast<u32>(game::flight::kProjectilePoolSize);
+    log::log_info(
+        log::LogCategory::Game,
+        "procedural_test: fly toward the planet — terrain LOD streams in; "
+        "--system=<n> / --seed=<n> for other systems");
+    return true;
+}
+
 constexpr SceneDesc kScenes[] = {
     {"grid_freelook",
      "Free-look camera + ground grid (minimal baseline)",
@@ -789,6 +993,9 @@ constexpr SceneDesc kScenes[] = {
     {"content_smoke_test",
      "P3-09 — load the full data catalog + integrity check (CONTENT_SMOKE)",
      &setup_content_smoke_test},
+    {"procedural_test",
+     "P4-08 — galaxy + generated system + LOD-streamed planetary terrain",
+     &setup_procedural_test},
 };
 
 constexpr std::size_t kSceneCount = sizeof(kScenes) / sizeof(kScenes[0]);

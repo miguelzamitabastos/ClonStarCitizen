@@ -767,6 +767,23 @@ bool create_image_views_and_framebuffers(RendererState& state, VkDevice device)
         &state.instance_mapped);
 }
 
+[[nodiscard]] bool create_terrain_model_buffer(RendererState& state, const DeviceState& device)
+{
+    if (!create_host_buffer(
+            device,
+            nullptr,
+            sizeof(glm::mat4),
+            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+            &state.terrain_model_buffer,
+            &state.terrain_model_memory,
+            &state.terrain_model_mapped)) {
+        return false;
+    }
+    const glm::mat4 identity(1.0f);
+    std::memcpy(state.terrain_model_mapped, &identity, sizeof(glm::mat4));
+    return true;
+}
+
 [[nodiscard]] bool shader_paths_for(
     render::BuiltinShaderId id, std::string& vert_path, std::string& frag_path)
 {
@@ -1157,6 +1174,35 @@ void destroy_gpu_mesh(GpuMesh& mesh, VkDevice device)
         }
     }
 
+    // P4-08: procedural terrain — one non-instanced drawIndexed per resident
+    // chunk, all sharing the single planet-model matrix at binding 1.
+    if (state.terrain_model_buffer != VK_NULL_HANDLE) {
+        if (const render::PipelineEntry* mesh_pipe =
+                render::pipeline_catalog_get(state.pipelines, state.mesh_pipeline)) {
+            bool bound = false;
+            for (u32 i = 0; i < kMaxTerrainDrawChunks; ++i) {
+                const GpuMesh& gm = state.terrain_chunks[i];
+                if (!gm.ready || gm.vertex_buffer == VK_NULL_HANDLE
+                    || gm.index_buffer == VK_NULL_HANDLE || gm.index_count == 0) {
+                    continue;
+                }
+                if (!bound) {
+                    vkCmdBindPipeline(
+                        cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_pipe->pipeline);
+                    vkCmdBindDescriptorSets(
+                        cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, mesh_pipe->layout, 0, 1,
+                        &state.descriptor_sets[frame_index], 0, nullptr);
+                    bound = true;
+                }
+                const VkBuffer     vbs[]  = {gm.vertex_buffer, state.terrain_model_buffer};
+                const VkDeviceSize offs[] = {0, 0};
+                vkCmdBindVertexBuffers(cmd, 0, 2, vbs, offs);
+                vkCmdBindIndexBuffer(cmd, gm.index_buffer, 0, VK_INDEX_TYPE_UINT32);
+                vkCmdDrawIndexed(cmd, gm.index_count, 1, 0, 0, 0);
+            }
+        }
+    }
+
     // P0-11: Dear ImGui overlay inside the active render pass (before EndRenderPass).
     if (debug_ui != nullptr) {
         debug::debug_ui_render(*debug_ui, cmd);
@@ -1368,6 +1414,12 @@ bool renderer_create(
         return false;
     }
 
+    if (!create_terrain_model_buffer(state, device)) {
+        log::log_error(log::LogCategory::Vulkan, "Failed to create terrain model buffer.");
+        renderer_destroy(state, device);
+        return false;
+    }
+
     if (!create_graphics_pipelines(state, device.device)) {
         log::log_error(log::LogCategory::Vulkan, "Failed to create pipeline catalog.");
         renderer_destroy(state, device);
@@ -1540,6 +1592,58 @@ bool renderer_upload_mesh(
     return true;
 }
 
+bool renderer_upload_terrain_chunk(
+    RendererState& state, const DeviceState& device, u32 slot, const assets::MeshCpu& mesh)
+{
+    if (slot >= kMaxTerrainDrawChunks || mesh.vertices == nullptr || mesh.indices == nullptr
+        || mesh.vertex_count == 0 || mesh.index_count == 0) {
+        return false;
+    }
+
+    GpuMesh& gm = state.terrain_chunks[slot];
+    if (gm.vertex_buffer != VK_NULL_HANDLE || gm.index_buffer != VK_NULL_HANDLE) {
+        vkDeviceWaitIdle(device.device);
+        destroy_gpu_mesh(gm, device.device);
+    }
+
+    if (!create_host_buffer(
+            device, mesh.vertices, sizeof(assets::MeshVertex) * mesh.vertex_count,
+            VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, &gm.vertex_buffer, &gm.vertex_memory)) {
+        destroy_gpu_mesh(gm, device.device);
+        return false;
+    }
+    if (!create_host_buffer(
+            device, mesh.indices, sizeof(u32) * mesh.index_count,
+            VK_BUFFER_USAGE_INDEX_BUFFER_BIT, &gm.index_buffer, &gm.index_memory)) {
+        destroy_gpu_mesh(gm, device.device);
+        return false;
+    }
+    gm.vertex_count = mesh.vertex_count;
+    gm.index_count  = mesh.index_count;
+    gm.ready        = true;
+    return true;
+}
+
+void renderer_retire_terrain_chunk(RendererState& state, const DeviceState& device, u32 slot)
+{
+    if (slot >= kMaxTerrainDrawChunks) {
+        return;
+    }
+    GpuMesh& gm = state.terrain_chunks[slot];
+    if (gm.vertex_buffer == VK_NULL_HANDLE && gm.index_buffer == VK_NULL_HANDLE && !gm.ready) {
+        return;
+    }
+    vkDeviceWaitIdle(device.device);
+    destroy_gpu_mesh(gm, device.device);
+}
+
+void renderer_set_terrain_model(RendererState& state, const glm::mat4& model)
+{
+    if (state.terrain_model_mapped != nullptr) {
+        std::memcpy(state.terrain_model_mapped, &model, sizeof(glm::mat4));
+    }
+}
+
 void renderer_destroy(RendererState& state, const DeviceState& device)
 {
     if (device.device == VK_NULL_HANDLE) {
@@ -1562,6 +1666,22 @@ void renderer_destroy(RendererState& state, const DeviceState& device)
     }
 
     destroy_gpu_mesh(state.demo_mesh, device.device);
+
+    for (u32 i = 0; i < kMaxTerrainDrawChunks; ++i) {
+        destroy_gpu_mesh(state.terrain_chunks[i], device.device);
+    }
+    if (state.terrain_model_mapped != nullptr && state.terrain_model_memory != VK_NULL_HANDLE) {
+        vkUnmapMemory(device.device, state.terrain_model_memory);
+        state.terrain_model_mapped = nullptr;
+    }
+    if (state.terrain_model_buffer != VK_NULL_HANDLE) {
+        vkDestroyBuffer(device.device, state.terrain_model_buffer, nullptr);
+        state.terrain_model_buffer = VK_NULL_HANDLE;
+    }
+    if (state.terrain_model_memory != VK_NULL_HANDLE) {
+        vkFreeMemory(device.device, state.terrain_model_memory, nullptr);
+        state.terrain_model_memory = VK_NULL_HANDLE;
+    }
 
     if (state.instance_mapped != nullptr && state.instance_memory != VK_NULL_HANDLE) {
         vkUnmapMemory(device.device, state.instance_memory);

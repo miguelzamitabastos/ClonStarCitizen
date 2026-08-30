@@ -23,6 +23,10 @@ inline constexpr u32 kMaxFramesInFlight  = 2;
 /// Fixed instance capacity — one draw call, no heap growth in the frame loop.
 inline constexpr u32 kMaxInstancesPerDrawCall = 1024u;
 
+/// P4-08: fixed capacity of resident procedural-terrain chunk meshes (one
+/// non-instanced drawIndexed each). >= game::world::kMaxLoadedChunks.
+inline constexpr u32 kMaxTerrainDrawChunks = 64u;
+
 /// Clear color: space gray (~0.1, 0.1, 0.1).
 inline constexpr f32 kClearR = 0.1f;
 inline constexpr f32 kClearG = 0.1f;
@@ -95,6 +99,13 @@ struct RendererState {
 
     GpuMesh demo_mesh{};
 
+    /// P4-08: procedural terrain — one GpuMesh per resident chunk, plus a single
+    /// host-mapped model matrix (planet world transform) shared by all of them.
+    GpuMesh        terrain_chunks[kMaxTerrainDrawChunks]{};
+    VkBuffer       terrain_model_buffer = VK_NULL_HANDLE;
+    VkDeviceMemory terrain_model_memory = VK_NULL_HANDLE;
+    void*          terrain_model_mapped = nullptr;
+
     /// Ground grid: pre-baked VB (LINE_LIST via grid_pipeline handle).
     VkBuffer       grid_vertex_buffer = VK_NULL_HANDLE;
     VkDeviceMemory grid_vertex_memory = VK_NULL_HANDLE;
@@ -133,6 +144,18 @@ void renderer_set_instances(RendererState& state, const glm::mat4* models, u32 c
     RendererState& state,
     const DeviceState& device,
     const assets::MeshCpu& mesh);
+
+/// P4-08: main-thread upload of one procedural terrain chunk into `slot`
+/// (< kMaxTerrainDrawChunks). Replaces whatever was in the slot.
+[[nodiscard]] bool renderer_upload_terrain_chunk(
+    RendererState& state, const DeviceState& device, u32 slot, const assets::MeshCpu& mesh);
+
+/// P4-08: free the GPU buffers of terrain chunk `slot` (waits for the device).
+void renderer_retire_terrain_chunk(RendererState& state, const DeviceState& device, u32 slot);
+
+/// P4-08: set the model matrix (planet world transform) applied to every resident
+/// terrain chunk. Chunk vertices are planet-relative; this places the planet.
+void renderer_set_terrain_model(RendererState& state, const glm::mat4& model);
 
 /// Acquire → clear → grid + optional instanced mesh → ImGui (optional) → submit → present.
 /// `debug_ui` / `debug_stats` nullptr = no overlay (P0-11). Stats pointer reserved for
