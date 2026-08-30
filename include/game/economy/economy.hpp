@@ -388,6 +388,13 @@ void attach_cargo_hold_if_missing(flecs::entity ship);
 /// templates carry a `title`. Logs `CSC_MISSION_SMOKE: PASS|FAIL`.
 [[nodiscard]] bool mission_content_smoke_test(flecs::world& world);
 
+/// P3-09 integrity pass over the economy catalogs (commodities / markets /
+/// mission templates / locations): unique ids, every cross-reference
+/// resolvable, and no cycles in `requires_completed_id` chains. Logs each
+/// problem; returns false if any. Requires `load_economy_data` +
+/// `load_location_catalog` to have run.
+[[nodiscard]] bool validate_economy_content(flecs::world& world);
+
 void fill_economy_telemetry(flecs::world& world, EconomyDebugSnapshot& out);
 
 }  // namespace csc::game::economy

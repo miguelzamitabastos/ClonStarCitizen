@@ -302,6 +302,49 @@ bool suit_smoke_test(flecs::world& world)
     return ok;
 }
 
+bool validate_suit_catalog(flecs::world& world)
+{
+    const SuitCatalog* cat = world.try_get<SuitCatalog>();
+    if (cat == nullptr || cat->count == 0) {
+        log::log_error(log::LogCategory::Config, "content: suit catalog empty/missing");
+        return false;
+    }
+    bool ok = true;
+    for (u32 i = 0; i < cat->count; ++i) {
+        const SuitDef& s = cat->items[i];
+        for (u32 j = i + 1; j < cat->count; ++j) {
+            if (std::strcmp(cat->items[j].id, s.id) == 0) {
+                log::log_error(
+                    log::LogCategory::Config, "content: duplicate suit id '%s'", s.id);
+                ok = false;
+            }
+        }
+        if (s.damage_reduction < 0.f || s.damage_reduction > 0.95f) {
+            log::log_error(
+                log::LogCategory::Config,
+                "content: suit '%s' damage_reduction %.2f out of [0, 0.95]",
+                s.id,
+                static_cast<double>(s.damage_reduction));
+            ok = false;
+        }
+        if (s.eva_capacity < 0.f || s.move_speed_mult <= 0.f) {
+            log::log_error(
+                log::LogCategory::Config,
+                "content: suit '%s' has a non-positive eva_capacity/move_speed_mult",
+                s.id);
+            ok = false;
+        }
+    }
+    if (find_suit_def(*cat, kDefaultPlayerSuitId) == nullptr) {
+        log::log_error(
+            log::LogCategory::Config,
+            "content: missing engine default suit '%s'",
+            kDefaultPlayerSuitId);
+        ok = false;
+    }
+    return ok;
+}
+
 flecs::entity spawn_suit_locker(
     flecs::world& world, const glm::vec3& position, const char* suit_id)
 {

@@ -81,4 +81,8 @@ bool equip_player_suit(flecs::world& world, const char* suit_id);
 /// plus an unknown id is rejected. Logs `CSC_SUIT_SMOKE: PASS|FAIL`.
 [[nodiscard]] bool suit_smoke_test(flecs::world& world);
 
+/// P3-09 integrity pass over the suit catalog: non-empty, unique ids, stat
+/// ranges sane, and the engine default suit present. Logs each problem.
+[[nodiscard]] bool validate_suit_catalog(flecs::world& world);
+
 }  // namespace csc::game::character

@@ -121,6 +121,14 @@ def as_int(entry: Entry, key: str, where: str, report: Report):
         return None
 
 
+def as_int_silent(entry: Entry, key: str):
+    """int field or None — no reporting (used for chain walks)."""
+    try:
+        return int(entry.fields.get(key, ""), 0)
+    except ValueError:
+        return None
+
+
 def check_unique_ids(entries, kind, where_prefix, report, *, key="id", cap=None):
     """Return {id: entry} keeping the first of any duplicate."""
     seen: dict[str, Entry] = {}
@@ -299,6 +307,22 @@ def validate_missions(path: Path, commodities, markets, report: Report) -> dict[
             fac = as_int(e, key, where, report)
             if fac is not None and not 0 <= fac < NUM_FACTIONS:
                 report.error(where, f"{key}={fac} out of [0,{NUM_FACTIONS})")
+
+    # Cycle detection on requires_completed_id chains (mirrors P3-09 engine check).
+    def prereq(tid: int):
+        v = as_int_silent(by_id[tid], "requires_completed_id")
+        return v if (v is not None and v != MISSION_NO_REQUIREMENT and v in by_id) else None
+
+    for tid in by_id:
+        seen = {tid}
+        cur = prereq(tid)
+        while cur is not None:
+            if cur in seen:
+                report.error(f"{path.name}:{by_id[tid].line}",
+                             f"requires_completed_id chain from template {tid} forms a cycle")
+                break
+            seen.add(cur)
+            cur = prereq(cur)
     return by_id
 
 

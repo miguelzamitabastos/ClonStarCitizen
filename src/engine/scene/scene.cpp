@@ -5,6 +5,7 @@
 #include "game/audio/audio.hpp"
 #include "game/character/character.hpp"
 #include "game/character/suit_catalog.hpp"
+#include "game/content_smoke.hpp"
 #include "game/economy/economy.hpp"
 #include "game/economy/location_catalog.hpp"
 #include "game/flight/flight.hpp"
@@ -657,6 +658,28 @@ bool setup_ship_hangar_test(SceneContext& ctx)
     return true;
 }
 
+bool setup_content_smoke_test(SceneContext& ctx)
+{
+    if (ctx.world == nullptr) {
+        return false;
+    }
+
+    ecs::world_spawn_default_camera(*ctx.world, ctx.aspect);
+    ecs::world_spawn_default_grid(*ctx.world);
+
+    // scene_setup_by_name already loaded the weapon / ship / suit / location
+    // catalogs; the economy tables (commodities / markets / missions) need this.
+    (void)game::economy::load_economy_data(*ctx.world);
+
+    // P3-09: load-and-validate the whole data catalog through the real engine
+    // loaders. Result also in the `CONTENT_SMOKE: PASS|FAIL` log line.
+    (void)game::content::run_content_smoke_test(*ctx.world);
+
+    ctx.needs_shared_mesh = false;
+    ctx.instance_count    = 0;
+    return true;
+}
+
 constexpr SceneDesc kScenes[] = {
     {"grid_freelook",
      "Free-look camera + ground grid (minimal baseline)",
@@ -694,6 +717,9 @@ constexpr SceneDesc kScenes[] = {
     {"ship_hangar_test",
      "Buy / switch / sell player ships at a station hangar (P3-03)",
      &setup_ship_hangar_test},
+    {"content_smoke_test",
+     "P3-09 — load the full data catalog + integrity check (CONTENT_SMOKE)",
+     &setup_content_smoke_test},
 };
 
 constexpr std::size_t kSceneCount = sizeof(kScenes) / sizeof(kScenes[0]);

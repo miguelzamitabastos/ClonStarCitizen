@@ -160,6 +160,7 @@ set(ENGINE_SOURCES
     src/game/character/suit_catalog.cpp
     src/game/ai/ai.cpp
     src/game/tick.cpp
+    src/game/content_smoke.cpp
     src/game/economy/economy.cpp
     src/game/economy/location_catalog.cpp
     src/game/world/world.cpp

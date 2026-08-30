@@ -1,11 +1,17 @@
 # STATUS
 
-## Fase activa: Fase 3 — Expansión de Contenido — **EN CURSO (8/9)**
+## Fase activa: Fase 3 — Expansión de Contenido — **9/9 IMPLEMENTADA, PARADA: validación física pendiente**
+
+Las 9 tareas (P3-01..09) están implementadas y verificadas headless (build limpio
++ `content_smoke_test` PASS + smokes por escena). **No se abre Fase 4 hasta el OK
+explícito de Miguel** tras probar a mano — mismo criterio que cerró Fases 0/1/2.
+Lista de verificación manual: `.claude/VERIFICACION-PENDIENTE.md` (regenerado para
+Fase 3) / mensaje de cierre de la sesión.
 
 Fase 2 validada físicamente por Miguel el 2026-08-30 (probó las 5 escenas de
 `.claude/VERIFICACION-PENDIENTE.md` a mano; solo se ven cuadros porque aún no hay
 assets de arte, coherente con las fases del roadmap — sin bloqueo). Con eso se
-cierra formalmente Fase 2 (13/13) y se abre Fase 3 según
+cerró formalmente Fase 2 (13/13) y se abrió Fase 3 según
 [[09-FASE-3-EXPANSION-DE-CONTENIDO]]
 (`docs/roadmap/files/09-FASE-3-EXPANSION-DE-CONTENIDO.md`).
 
@@ -18,7 +24,7 @@ es Fase 4). El riesgo explícito de la fase: que se hardcodee contenido en C++ p
 velocidad. Objetivo contrario: añadir una nave / un arma / una misión = editar un
 archivo de datos, nunca tocar el motor.
 
-### Progreso Fase 3 — 8/9
+### Progreso Fase 3 — 9/9 (implementadas, pendientes de validación física)
 
 - Pipeline de datos (P3-01, P3-05, P3-08):       [###] 3/3
   - [x] P3-01 Pipeline de datos de nave: stats (masa, empuje, hardpoints, capacidad
@@ -37,10 +43,10 @@ archivo de datos, nunca tocar el motor.
         misión por localización (dep. P1D-05, P1C-06)
   - [x] P3-06 Personalización básica de personaje: trajes/armadura con stats
         (protección, capacidad EVA) (dep. P1B-01, P3-05)
-- Misiones y verificación (P3-07, P3-09):        [#] 1/2
+- Misiones y verificación (P3-07, P3-09):        [##] 2/2
   - [x] P3-07 Más contenido de misiones: plantillas adicionales + una línea
         narrativa simple opcional (dep. P1C-04, P2-09)
-  - [ ] P3-09 Verificación `content_smoke_test`: carga todo el catálogo y valida
+  - [x] P3-09 Verificación `content_smoke_test`: carga todo el catálogo y valida
         integridad (IDs únicos, referencias resolubles) (dep. P3-01..08)
 
 ### Restricciones de arquitectura de Fase 3 (del roadmap, vinculantes)
@@ -60,15 +66,20 @@ archivo de datos, nunca tocar el motor.
 5. Sigue vigente `.cursorrules`: DOD/ECS estricto, cero heap en Update/Render,
    pools/arenas pre-asignados, GLM vía `include/engine/math/glm.hpp`.
 
-### Definition of Done de Fase 3 (del roadmap)
+### Definition of Done de Fase 3 (del roadmap) — estado
 
-- `content_smoke_test` carga el catálogo completo (naves + armas + misiones) sin
-  errores de validación y reporta un resumen (nº de entradas por tipo) en consola.
-- El jugador puede comprar al menos **dos naves distintas** del catálogo en el
-  hangar de una estación y pilotarlas, con diferencias de stats perceptibles
-  (velocidad, maniobrabilidad, capacidad de carga).
-- Añadir una nave nueva al juego, documentado como prueba en este `STATUS.md`, se
-  hace **solo** editando el archivo de datos correspondiente — sin tocar `.cpp`/`.hpp`.
+- ✅ `content_smoke_test` carga el catálogo completo (naves + armas + suits +
+  localizaciones + commodities + mercados + misiones) sin errores de validación y
+  reporta el resumen por tipo en consola (`CONTENT_SMOKE: PASS`, escena
+  `--scene=content_smoke_test`). P3-09.
+- ⏳ El jugador puede comprar al menos **dos naves distintas** del catálogo en el
+  hangar (`ship_hangar_test`) y pilotarlas con diferencias perceptibles — cableado
+  y probado headless; **falta la validación física de Miguel**.
+- ✅ Añadir contenido nuevo (nave / arma / suit / misión / localización) se hace
+  **solo** editando el `.cfg` correspondiente. Probado en la práctica en P3-02
+  (4 hulls), P3-05 (3 armas), P3-06 (4 suits), P3-07 (7 misiones), P3-04 (Outpost C
+  + MarketC) — ningún `.cpp`/`.hpp` tocado para el contenido, solo para el
+  pipeline que lo lee.
 
 ### Deuda técnica arrastrada de Fase 2 (pendiente de resolver en un único bump de schema)
 
@@ -314,11 +325,39 @@ naves) o se difiere a Fase 6 (pulido).
    abre y 8 sigue cerrado. `validate_catalogs.py` (P3-08) ya valida
    `requires_completed_id` resoluble y los refs de `template` en `locations.cfg`.
    **Fuera de alcance, anotado:** sin HUD de descripción de misión (el `title`
-   solo sale por log al aceptar); no hay chequeo de ciclos en las cadenas
-   `requires_completed_id` (P3-09 puede añadirlo). Verificado: build limpio
+   solo sale por log al aceptar). El chequeo de ciclos en las cadenas
+   `requires_completed_id` lo añade P3-09. Verificado: build limpio
    (0 warnings) + 10 escenas headless (`economy_test` 26 NPCs) + `CSC_MISSION_SMOKE`/
    `CSC_SAVE_SMOKE`/`CSC_HANGAR_SMOKE`/`CSC_SUIT_SMOKE` PASS + `validate_catalogs.py`
    OK (13 misiones).
+
+9. **P3-09 `content_smoke_test`:** verificación de integridad de TODO el catálogo
+   a través de los loaders y componentes reales del motor (complementa a
+   `validate_catalogs.py` de P3-08, que hace lo mismo pero sin build — con ambos,
+   un desajuste entre el formato del archivo y el parser del motor también se
+   pilla). Nuevo módulo `game/content_smoke.{hpp,cpp}`:
+   `content::run_content_smoke_test(world)` lee los 7 singletons de catálogo,
+   loguea el resumen `content: N ships, N weapons, N suits, N locations, N
+   commodities, N markets, N missions` y delega en tres validadores de dominio —
+   `flight::validate_ship_weapon_refs` (ya existía), nuevo
+   `character::validate_suit_catalog` (no vacío, ids únicos, rangos, traje por
+   defecto presente) y nuevo `economy::validate_economy_content` (commodities
+   únicos+contiguos; mercados únicos; plantillas de misión únicas, con
+   `commodity_id`/`from_market`/`to_market`/`requires_completed_id` resolubles y
+   **sin ciclos** en las cadenas de prerequisito; cada NPC de `locations.cfg`
+   resuelve su market/commodity/template/dest). También comprueba los ids que el
+   motor spawnea por nombre (`ship.player.default`, `ship.npc.skiff`,
+   `weapon.fixed.repeater`, `weapon.turret.repeater`). Salida:
+   `CONTENT_SMOKE: PASS|FAIL`.
+   Escena nueva `content_smoke_test` (sin render): carga `load_economy_data` +
+   corre el chequeo. `validate_catalogs.py` (P3-08) gana el mismo chequeo de
+   ciclos para no divergir.
+   Verificado: `CONTENT_SMOKE: PASS` sobre los catálogos actuales
+   (6/4/4/3/3/3/13), 11 escenas headless sin error, los 5 gates de smoke PASS
+   (`CONTENT`/`HANGAR`/`SUIT`/`MISSION`/`SAVE`), y test negativo con 3 fallos
+   inyectados a la vez (arma colgante en una nave, ciclo en las misiones, market
+   inexistente en un NPC de localización) → `CONTENT_SMOKE: FAIL` con las 3 causas
+   listadas; `validate_catalogs.py` detecta el ciclo igual (exit 1).
 
 ## Fase 2 — Profundidad de Sistemas — **COMPLETADA y validada** (13/13, validación física 2026-08-30)
 
@@ -577,6 +616,7 @@ demo (`flight_test`, `on_foot_test`, `economy_test`, `universe_test`, `ui_audio_
 | `ui_audio_test` | P1E OK — HUD Both, Esc pause, 3 positional sine tones (synthetic PCM) |
 | `save_load_test` | P1F OK — F5/F9 + pause Save/Load; CSC_SAVE_SMOKE |
 | `ship_hangar_test` | P3-03/P3-06 — kioscos de nave + taquillas de traje + asiento piloto; CSC_HANGAR_SMOKE / CSC_SUIT_SMOKE |
+| `content_smoke_test` | P3-09 — carga todo el catálogo + chequeo de integridad; `CONTENT_SMOKE: PASS/FAIL` |
 
 ## Decisiones P1F (documentadas)
 1. **Formato (P1F-01):** binario versionado poco-endian con cabecera
@@ -633,6 +673,17 @@ Cuando una entidad lleva `LocalToShip { ship_entity, local_position, local_orien
 5. Al salir (quitar `LocalToShip`), se bakea la pose mundial y la sim pasa a espacio mundo / GravityZone.
 
 ## Bitácora (más reciente arriba, una línea por tarea)
+- 2026-08-30 [P3-09 → Fase 3 9/9] `content_smoke_test`: nuevo módulo
+  `game/content_smoke.{hpp,cpp}` + escena `content_smoke_test` que carga TODO el
+  catálogo por los loaders reales del motor y valida integridad — resumen por tipo
+  + `CONTENT_SMOKE: PASS|FAIL`. Delega en `flight::validate_ship_weapon_refs` +
+  nuevos `character::validate_suit_catalog` y `economy::validate_economy_content`
+  (ids únicos, refs resolubles, ciclos de `requires_completed_id`, refs de NPC de
+  `locations.cfg`, ids requeridos por el motor). `validate_catalogs.py` gana el
+  chequeo de ciclos. **Fase 3 IMPLEMENTADA 9/9** — PARADA: pendiente validación
+  física de Miguel antes de abrir Fase 4 (mismo criterio que Fases 0/1/2).
+  Verificado: `CONTENT_SMOKE: PASS` (6/4/4/3/3/3/13), 11 escenas headless, 5 gates
+  de smoke PASS, test negativo con 3 fallos → FAIL con las 3 causas.
 - 2026-08-30 [P3-07] Más misiones + narrativa: 7 plantillas nuevas en
   `mission_templates.cfg` (ids 6-12, total 13/16). `MissionTemplate` gana `title`
   (frase de sabor opcional, logueada al aceptar). Arco "The Ashfall Line"

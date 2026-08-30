@@ -1539,6 +1539,212 @@ bool mission_content_smoke_test(flecs::world& world)
     return ok;
 }
 
+namespace {
+
+[[nodiscard]] bool market_id_exists(const MarketTable& t, u32 id)
+{
+    for (u32 i = 0; i < t.count; ++i) {
+        if (t.items[i].id == id) {
+            return true;
+        }
+    }
+    return false;
+}
+
+}  // namespace
+
+bool validate_economy_content(flecs::world& world)
+{
+    const CommodityTable*       comm = world.try_get<CommodityTable>();
+    const MarketTable*          mk   = world.try_get<MarketTable>();
+    const MissionTemplateTable* mt   = world.try_get<MissionTemplateTable>();
+    const LocationCatalog*      loc  = world.try_get<LocationCatalog>();
+
+    bool ok = true;
+
+    // --- Commodities: unique ids, contiguous from 0 (market stock arrays). ---
+    if (comm == nullptr || comm->count == 0) {
+        log::log_error(log::LogCategory::Config, "content: commodity table empty/missing");
+        ok = false;
+    } else {
+        for (u32 i = 0; i < comm->count; ++i) {
+            for (u32 j = i + 1; j < comm->count; ++j) {
+                if (comm->items[i].id == comm->items[j].id) {
+                    log::log_error(
+                        log::LogCategory::Config,
+                        "content: duplicate commodity id %u",
+                        comm->items[i].id);
+                    ok = false;
+                }
+            }
+            if (comm->items[i].id >= comm->count) {
+                log::log_error(
+                    log::LogCategory::Config,
+                    "content: commodity id %u is not contiguous from 0",
+                    comm->items[i].id);
+                ok = false;
+            }
+        }
+    }
+    const u32 ncomm = (comm != nullptr) ? comm->count : 0;
+
+    // --- Markets: unique ids. ---
+    if (mk == nullptr || mk->count == 0) {
+        log::log_error(log::LogCategory::Config, "content: market table empty/missing");
+        ok = false;
+    } else {
+        for (u32 i = 0; i < mk->count; ++i) {
+            for (u32 j = i + 1; j < mk->count; ++j) {
+                if (mk->items[i].id == mk->items[j].id) {
+                    log::log_error(
+                        log::LogCategory::Config,
+                        "content: duplicate market id %u",
+                        mk->items[i].id);
+                    ok = false;
+                }
+            }
+        }
+    }
+
+    // --- Mission templates: unique ids, refs resolvable, no chain cycles. ---
+    if (mt == nullptr || mt->count == 0) {
+        log::log_error(log::LogCategory::Config, "content: mission template table empty/missing");
+        ok = false;
+    } else {
+        for (u32 i = 0; i < mt->count; ++i) {
+            const MissionTemplate& t = mt->items[i];
+            for (u32 j = i + 1; j < mt->count; ++j) {
+                if (mt->items[j].id == t.id) {
+                    log::log_error(
+                        log::LogCategory::Config,
+                        "content: duplicate mission template id %u",
+                        t.id);
+                    ok = false;
+                }
+            }
+            if (t.type == MissionType::Delivery && ncomm != 0 && t.commodity_id >= ncomm) {
+                log::log_error(
+                    log::LogCategory::Config,
+                    "content: mission %u delivers commodity %u which does not exist",
+                    t.id,
+                    t.commodity_id);
+                ok = false;
+            }
+            if (mk != nullptr) {
+                if (!market_id_exists(*mk, t.from_market)) {
+                    log::log_error(
+                        log::LogCategory::Config,
+                        "content: mission %u from_market %u does not exist",
+                        t.id,
+                        t.from_market);
+                    ok = false;
+                }
+                if (!market_id_exists(*mk, t.to_market)) {
+                    log::log_error(
+                        log::LogCategory::Config,
+                        "content: mission %u to_market %u does not exist",
+                        t.id,
+                        t.to_market);
+                    ok = false;
+                }
+            }
+            if (t.requires_completed_id != kNoMissionRequirement
+                && find_template(*mt, t.requires_completed_id) == nullptr) {
+                log::log_error(
+                    log::LogCategory::Config,
+                    "content: mission %u requires_completed_id %u does not exist",
+                    t.id,
+                    t.requires_completed_id);
+                ok = false;
+            }
+        }
+        // Cycle / runaway chain detection: walk requires_completed_id from each
+        // template; a well-formed chain terminates in < count steps.
+        for (u32 i = 0; i < mt->count; ++i) {
+            const u32 start = mt->items[i].id;
+            u32       cur   = mt->items[i].requires_completed_id;
+            u32       steps = 0;
+            bool      cycle = false;
+            while (cur != kNoMissionRequirement) {
+                if (cur == start || steps > mt->count) {
+                    cycle = true;
+                    break;
+                }
+                const MissionTemplate* p = find_template(*mt, cur);
+                if (p == nullptr) {
+                    break;  // dangling ref already reported above
+                }
+                cur = p->requires_completed_id;
+                ++steps;
+            }
+            if (cycle) {
+                log::log_error(
+                    log::LogCategory::Config,
+                    "content: mission %u requires_completed_id chain forms a cycle",
+                    start);
+                ok = false;
+            }
+        }
+    }
+
+    // --- Locations: every NPC reference resolves. ---
+    if (loc != nullptr) {
+        for (u32 l = 0; l < loc->count; ++l) {
+            const LocationDef& d = loc->items[l];
+            for (u32 n = 0; n < d.npc_count && n < kMaxLocationNpcs; ++n) {
+                const LocationNpc& npc = d.npcs[n];
+                switch (npc.kind) {
+                case LocationNpcKind::Trader:
+                    if (mk != nullptr && !market_id_exists(*mk, npc.market_id)) {
+                        log::log_error(
+                            log::LogCategory::Config,
+                            "content: location '%s' npc %u: market %u does not exist",
+                            d.id,
+                            n,
+                            npc.market_id);
+                        ok = false;
+                    }
+                    if (ncomm != 0 && npc.commodity_id >= ncomm) {
+                        log::log_error(
+                            log::LogCategory::Config,
+                            "content: location '%s' npc %u: commodity %u does not exist",
+                            d.id,
+                            n,
+                            npc.commodity_id);
+                        ok = false;
+                    }
+                    break;
+                case LocationNpcKind::MissionGiver:
+                case LocationNpcKind::TurnIn:
+                    if (mt != nullptr && find_template(*mt, npc.template_id) == nullptr) {
+                        log::log_error(
+                            log::LogCategory::Config,
+                            "content: location '%s' npc %u: template %u does not exist",
+                            d.id,
+                            n,
+                            npc.template_id);
+                        ok = false;
+                    }
+                    break;
+                case LocationNpcKind::TravelPad:
+                    if (find_location_def(*loc, npc.dest_location) == nullptr) {
+                        log::log_error(
+                            log::LogCategory::Config,
+                            "content: location '%s' npc %u: travel dest '%s' is not a location",
+                            d.id,
+                            n,
+                            npc.dest_location);
+                        ok = false;
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    return ok;
+}
+
 void fill_economy_telemetry(flecs::world& world, EconomyDebugSnapshot& out)
 {
     out = EconomyDebugSnapshot{};
