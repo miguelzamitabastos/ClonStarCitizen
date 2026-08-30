@@ -1,6 +1,6 @@
 # STATUS
 
-## Fase activa: Fase 3 — Expansión de Contenido — **EN CURSO (7/9)**
+## Fase activa: Fase 3 — Expansión de Contenido — **EN CURSO (8/9)**
 
 Fase 2 validada físicamente por Miguel el 2026-08-30 (probó las 5 escenas de
 `.claude/VERIFICACION-PENDIENTE.md` a mano; solo se ven cuadros porque aún no hay
@@ -18,7 +18,7 @@ es Fase 4). El riesgo explícito de la fase: que se hardcodee contenido en C++ p
 velocidad. Objetivo contrario: añadir una nave / un arma / una misión = editar un
 archivo de datos, nunca tocar el motor.
 
-### Progreso Fase 3 — 7/9
+### Progreso Fase 3 — 8/9
 
 - Pipeline de datos (P3-01, P3-05, P3-08):       [###] 3/3
   - [x] P3-01 Pipeline de datos de nave: stats (masa, empuje, hardpoints, capacidad
@@ -37,8 +37,8 @@ archivo de datos, nunca tocar el motor.
         misión por localización (dep. P1D-05, P1C-06)
   - [x] P3-06 Personalización básica de personaje: trajes/armadura con stats
         (protección, capacidad EVA) (dep. P1B-01, P3-05)
-- Misiones y verificación (P3-07, P3-09):        [ ] 0/2
-  - [ ] P3-07 Más contenido de misiones: plantillas adicionales + una línea
+- Misiones y verificación (P3-07, P3-09):        [#] 1/2
+  - [x] P3-07 Más contenido de misiones: plantillas adicionales + una línea
         narrativa simple opcional (dep. P1C-04, P2-09)
   - [ ] P3-09 Verificación `content_smoke_test`: carga todo el catálogo y valida
         integridad (IDs únicos, referencias resolubles) (dep. P3-01..08)
@@ -295,6 +295,31 @@ naves) o se difiere a Fase 6 (pulido).
    `CSC_HANGAR_SMOKE`/`CSC_SAVE_SMOKE` PASS + `validate_catalogs.py` OK +
    `--suit=` aplica (log `armour 45%`).
 
+8. **P3-07 más misiones + línea narrativa:** 7 plantillas nuevas en
+   `mission_templates.cfg` (ids 6-12; total 13/16). `MissionTemplate` gana un
+   campo `title` (`kMissionTitleBytes=80`, clave `title=`) — una frase de sabor
+   **opcional**, no serializada (vive solo en la tabla de plantillas), que
+   `handle_interact` registra en el log al aceptar la misión. **Arco narrativo
+   "The Ashfall Line"** (ids 6→7→8→9, encadenados con `requires_completed_id`,
+   `branch_group=0` — no bloquea nada): Silent Beacon (visit) → Patch the Relay
+   (delivery, requiere 6) → Ashfall Raiders (combat, requiere 7) → Ashfall
+   Debrief (visit, requiere 8). Reutiliza P1C/P2-09/P2-10 tal cual, cero mecánica
+   nueva. Más 3 misiones sueltas siempre ofertables (Medbay Resupply / Survey Run
+   / Pirate Sweep). Los NPC dadores/turn-in se añaden vía `locations.cfg` (P3-04):
+   MarketA +2, MarketB +2, Outpost C +4 (givers 7/8/9 + un turn-in de mercado 2)
+   → `economy_test` pasa de 18 a 26 NPCs en 3 localizaciones. Gate headless
+   `CSC_MISSION_SMOKE=1` (en `setup_economy_test_scene`): comprueba que el
+   catálogo carga, que el arco tiene la forma de cadena correcta (6 libre, 7←6,
+   8←7, 9←8) y que cada paso lleva `title`; simula completar 6 y verifica que 7 se
+   abre y 8 sigue cerrado. `validate_catalogs.py` (P3-08) ya valida
+   `requires_completed_id` resoluble y los refs de `template` en `locations.cfg`.
+   **Fuera de alcance, anotado:** sin HUD de descripción de misión (el `title`
+   solo sale por log al aceptar); no hay chequeo de ciclos en las cadenas
+   `requires_completed_id` (P3-09 puede añadirlo). Verificado: build limpio
+   (0 warnings) + 10 escenas headless (`economy_test` 26 NPCs) + `CSC_MISSION_SMOKE`/
+   `CSC_SAVE_SMOKE`/`CSC_HANGAR_SMOKE`/`CSC_SUIT_SMOKE` PASS + `validate_catalogs.py`
+   OK (13 misiones).
+
 ## Fase 2 — Profundidad de Sistemas — **COMPLETADA y validada** (13/13, validación física 2026-08-30)
 
 ## Progreso Fase 2 — 13/13 COMPLETADO
@@ -547,7 +572,7 @@ demo (`flight_test`, `on_foot_test`, `economy_test`, `universe_test`, `ui_audio_
 | `grid_freelook` / `instancing_stress` / `mesh_viewer` | Fase 0 OK |
 | `flight_test` | P1A OK — nave + objetivo a 50m |
 | `on_foot_test` | P1B OK — interior LocalToShip → hatch EVA → estación + FPS target |
-| `economy_test` | P1C/P3-04 — 3 localizaciones pobladas desde `locations.cfg` (MarketA/B + Outpost C) |
+| `economy_test` | P1C/P3-04/P3-07 — 3 localizaciones / 26 NPCs desde `locations.cfg`; arco "Ashfall Line"; CSC_MISSION_SMOKE |
 | `universe_test` | P1D OK — Estacion-Alfa → espacio (rebase ≥1) → Planeta-01-LZ |
 | `ui_audio_test` | P1E OK — HUD Both, Esc pause, 3 positional sine tones (synthetic PCM) |
 | `save_load_test` | P1F OK — F5/F9 + pause Save/Load; CSC_SAVE_SMOKE |
@@ -608,6 +633,18 @@ Cuando una entidad lleva `LocalToShip { ship_entity, local_position, local_orien
 5. Al salir (quitar `LocalToShip`), se bakea la pose mundial y la sim pasa a espacio mundo / GravityZone.
 
 ## Bitácora (más reciente arriba, una línea por tarea)
+- 2026-08-30 [P3-07] Más misiones + narrativa: 7 plantillas nuevas en
+  `mission_templates.cfg` (ids 6-12, total 13/16). `MissionTemplate` gana `title`
+  (frase de sabor opcional, logueada al aceptar). Arco "The Ashfall Line"
+  (6→7→8→9 encadenado con `requires_completed_id`, sin `branch_group`) +
+  3 misiones sueltas. NPC dadores/turn-in añadidos vía `locations.cfg` (P3-04):
+  `economy_test` 18→26 NPCs. Cero mecánica nueva (reutiliza P1C/P2-09/P2-10).
+  Gate `CSC_MISSION_SMOKE=1` (forma de cadena + `title` + unlock por
+  `requires_completed_id`). `validate_catalogs.py` ya cubre los refs.
+  Verificado: build 0 warnings + 10 escenas headless + 4 smokes PASS + validador
+  OK (13 misiones). **Verificación manual pendiente de Miguel:** hacer el arco
+  Ashfall entero en `economy_test` (Silent Beacon en MarketA → Outpost C ...) y
+  comprobar que cada paso desbloquea el siguiente y sale el `title` en consola.
 - 2026-08-30 [P3-06] Trajes/armadura por datos: `assets/data/suits.cfg` (`[[suit]]`)
   → `character::SuitCatalog`/`SuitDef` (POD, `kMaxSuitDefs=16`); componente nuevo
   `character::Suit`. `spawn_player_character` gana `suit_id` opcional; flag

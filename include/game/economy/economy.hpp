@@ -16,6 +16,7 @@ inline constexpr u32 kMaxMissionTemplates = 16;
 inline constexpr u32 kMaxActiveMissions   = 8;
 inline constexpr u32 kNumFactions         = 4;
 inline constexpr u32 kMaxNameBytes        = 32;
+inline constexpr u32 kMissionTitleBytes   = 80; ///< P3-07: mission flavour one-liner
 
 inline constexpr f32 kDefaultCargoVolume = 40.f;
 inline constexpr f32 kDefaultCargoMass   = 100.f;
@@ -113,6 +114,10 @@ struct MissionTemplate {
     /// P2-10: hostile faction spawned for Combat/Escort (unused otherwise) —
     /// separate from `faction_id`/`rep_delta`, which stay the reward faction.
     u32         target_faction_id = 0;
+    /// P3-07: optional one-line flavour text (cfg key `title`). Logged on
+    /// accept / turn-in; carries the narrative arc's voice. Not serialised
+    /// (lives only in the template table, like the rest of MissionTemplate).
+    char        title[kMissionTitleBytes]{};
 };
 
 struct MissionTemplateTable {
@@ -376,6 +381,12 @@ void attach_cargo_hold_if_missing(flecs::entity ship);
     const char*      prompt);
 
 [[nodiscard]] bool setup_economy_test_scene(flecs::world& world, f32 aspect);
+
+/// Headless P3-07 check (scene gate CSC_MISSION_SMOKE=1): assert the mission
+/// catalog loaded, the "Ashfall Line" arc (ids 6..9) is chained correctly
+/// (each step gated on the previous via requires_completed_id) and its
+/// templates carry a `title`. Logs `CSC_MISSION_SMOKE: PASS|FAIL`.
+[[nodiscard]] bool mission_content_smoke_test(flecs::world& world);
 
 void fill_economy_telemetry(flecs::world& world, EconomyDebugSnapshot& out);
 

@@ -9,6 +9,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 namespace csc::game::economy {
@@ -215,6 +216,10 @@ bool apply_template_kv(MissionTemplate& t, const char* key, const char* value)
     }
     if (std::strcmp(key, "name") == 0) {
         copy_name(t.name, sizeof(t.name), value);
+        return true;
+    }
+    if (std::strcmp(key, "title") == 0) {  // P3-07: optional flavour one-liner
+        copy_name(t.title, sizeof(t.title), value);
         return true;
     }
     if (std::strcmp(key, "commodity_id") == 0) {
@@ -1319,6 +1324,12 @@ bool handle_interact(flecs::world& world, flecs::entity_t actor_id, flecs::entit
                     "Accepted mission template %u (active=%zu)",
                     dlg->template_id,
                     missions->pool.alive);
+                // P3-07: surface the narrative one-liner, if any.
+                if (const MissionTemplate* tmpl =
+                        find_template(*templates, dlg->template_id);
+                    tmpl != nullptr && tmpl->title[0] != '\0') {
+                    log::log_info(log::LogCategory::Game, "  \"%s\"", tmpl->title);
+                }
             } else {
                 log::log_info(
                     log::LogCategory::Game,
@@ -1480,11 +1491,52 @@ bool setup_economy_test_scene(flecs::world& world, f32 aspect)
 
     world.set<ecs::ControlMode>({ecs::ControlModeKind::OnFoot});
 
+    if (const char* smoke = std::getenv("CSC_MISSION_SMOKE");
+        smoke != nullptr && smoke[0] == '1') {
+        (void)mission_content_smoke_test(world);
+    }
+
     log::log_info(
         log::LogCategory::Game,
         "economy_test ready: buy ore@A -> travel B -> sell/turn-in | F=Interact wallet=%d",
         kStartingCredits);
     return true;
+}
+
+bool mission_content_smoke_test(flecs::world& world)
+{
+    const MissionTemplateTable* templates = world.try_get<MissionTemplateTable>();
+    if (templates == nullptr || templates->count == 0) {
+        log::log_error(log::LogCategory::Game, "CSC_MISSION_SMOKE: FAIL (no templates)");
+        return false;
+    }
+
+    const MissionTemplate* t6 = find_template(*templates, 6);
+    const MissionTemplate* t7 = find_template(*templates, 7);
+    const MissionTemplate* t8 = find_template(*templates, 8);
+    const MissionTemplate* t9 = find_template(*templates, 9);
+
+    bool ok = t6 != nullptr && t7 != nullptr && t8 != nullptr && t9 != nullptr;
+    if (ok) {
+        // The arc carries flavour text.
+        ok = ok && t6->title[0] != '\0' && t7->title[0] != '\0'
+             && t8->title[0] != '\0' && t9->title[0] != '\0';
+        // Chain shape: 6 is free, 7←6, 8←7, 9←8.
+        ok = ok && t6->requires_completed_id == kNoMissionRequirement;
+        ok = ok && t7->requires_completed_id == 6;
+        ok = ok && t8->requires_completed_id == 7;
+        ok = ok && t9->requires_completed_id == 8;
+
+        CompletedMissions done{};
+        ok = ok && mission_template_available(*t6, done);
+        ok = ok && !mission_template_available(*t7, done);  // 6 not done yet
+        done.done[6] = true;
+        ok = ok && mission_template_available(*t7, done);   // 6 done → 7 opens
+        ok = ok && !mission_template_available(*t8, done);  // 7 still pending
+    }
+
+    log::log_info(log::LogCategory::Game, "CSC_MISSION_SMOKE: %s", ok ? "PASS" : "FAIL");
+    return ok;
 }
 
 void fill_economy_telemetry(flecs::world& world, EconomyDebugSnapshot& out)
