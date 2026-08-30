@@ -165,6 +165,7 @@ set(ENGINE_SOURCES
     src/game/economy/location_catalog.cpp
     src/game/world/world.cpp
     src/game/world/star_system_gen.cpp
+    src/game/world/planet_terrain.cpp
     src/game/ui/ui.cpp
     src/game/audio/audio.cpp
     src/game/save/save.cpp

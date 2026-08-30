@@ -1,6 +1,6 @@
 # STATUS
 
-## Fase activa: Fase 4 — Universo Procedural — **EN CURSO (1/8)**
+## Fase activa: Fase 4 — Universo Procedural — **EN CURSO (2/8)**
 
 Fase 3 validada físicamente por Miguel el 2026-08-30 (probó las 6 secciones de
 `.claude/VERIFICACION-PENDIENTE.md` a mano: `content_smoke_test`, naves/armas por
@@ -19,11 +19,11 @@ suficiente contenido curado insertado sobre lo procedural para que no se sienta
 vacío. El sistema fijo de Fase 1 pasa a ser un caso particular (semilla fija) del
 generador, no se descarta. Es la fase técnicamente más exigente después de Fase 0.
 
-### Progreso Fase 4 — 1/8
+### Progreso Fase 4 — 2/8
 
 - [x] P4-01 Algoritmo de generación de sistema estelar (semilla → estrella,
       planetas, órbitas) (dep. P1D-02)
-- [ ] P4-02 Generación procedural de terreno planetario (heightmap por ruido,
+- [x] P4-02 Generación procedural de terreno planetario (heightmap por ruido,
       esférico) (dep. —)
 - [ ] P4-03 Streaming de terreno por chunks con LOD (extiende el streaming de
       P1D-03) (dep. P4-02, P1D-03)
@@ -120,6 +120,45 @@ junte todo esto. Bug latente conocido de baja probabilidad: cargar en la ventana
    Verificado: build limpio (0 warnings) + `CSC_SYSTEMGEN_SMOKE: PASS` + 11 escenas
    headless + los 5 gates de smoke previos PASS + `--seed=12345` reproducible
    (`Sys-00003039`, 8 cuerpos) y distinto de `--seed=99` (`Sys-00000063`, 10).
+
+2. **P4-02 terreno planetario procedural:** módulo nuevo
+   `game/world/planet_terrain.{hpp,cpp}` — **librería pura**, sin heap, sin FILE
+   I/O, sin globals; el `Rng64` SplitMix64 se extrajo a
+   `include/game/world/rng64.hpp` (compartido con P4-01).
+   - **Ruido:** Perlin 3D con gradientes de arista (12) hasheados por celda de
+     retículo (`SplitMix64`-finalizer sobre `ix/iy/iz ^ seed`), fade quíntico +
+     interpolación trilineal; `fbm3` suma `octaves` octavas normalizadas
+     (`lacunarity`/`gain`), salida ~[-1,1]. Cero dependencias externas.
+   - `PlanetTerrainParams` derivado por `planet_terrain_params(body_seed, radius,
+     has_atmosphere)` (usa el `body_seed` que P4-01 ya expone en
+     `GeneratedBodyInfo`): `elevation_scale` = 1.5–6% del radio,
+     `base_frequency` 1.4–3.4, 4–6 octavas, `sea_level` cerca de 0 si hay
+     atmósfera, en el suelo si es roca seca.
+   - `planet_height(pp, unit_dir)` → offset de elevación **acotado a
+     `[-elevation_scale, +elevation_scale]`** (fbm clampeado a [-1,1] antes de
+     escalar; el aplanado bajo `sea_level` solo reduce magnitud). Verificado en el
+     smoke.
+   - `cube_sphere_dir(face, s, t)` — mapeo cubo→esfera de 6 caras con el
+     "spherify" de Cobe/Rideout (menos distorsión de área) + normalize final.
+   - `build_planet_patch(pp, center, TerrainPatchSpec, MeshVertex*, u32&, u32*,
+     u32&)` — rellena **buffers fijos del llamante** (`kMaxPatchResolution=64` →
+     `kMaxPatchVertices`/`kMaxPatchIndices`) con un parche `(N+1)²` de una
+     sub-rect de una cara del cubo-esfera, desplazado por `planet_height`,
+     normales por diferencia finita tangente, color por rampa de altura
+     (agua/playa/hierba/roca/nieve), uv = (s,t). **Es la unidad exacta que P4-03
+     va a streamear** a un `Pool<TerrainChunk>`.
+   - Gate headless `CSC_PLANETGEN_SMOKE=1` (en `setup_universe_test`, junto al de
+     P4-01): 4 semillas → altura dentro de `elevation_scale`, normales unitarias,
+     re-generar un parche es byte-idéntico (`memcmp`), y dos parches que comparten
+     un borde de cara coinciden **exactamente** en los vértices de la costura.
+   **Fuera de alcance, anotado:** aún no hay render del terreno — el renderer solo
+   tiene una malla compartida instanciada (`renderer_upload_mesh` → `demo_mesh`),
+   y una malla de terreno propia necesita soporte multi-malla / buffers a medida
+   en Vulkan (`vulkan-pipeline-expert`), que llega con P4-03 (streaming) y P4-08
+   (escena `procedural_test`). Determinismo byte-exacto en el mismo binario;
+   posiciones vía `cosf`/`sinf`/`sqrtf` de libm (±1 ULP entre libms distintas).
+   Verificado: build limpio (0 warnings) + `CSC_PLANETGEN_SMOKE: PASS` + 11
+   escenas headless + los 6 gates de smoke previos PASS + `validate_catalogs.py` OK.
 
 ---
 
@@ -782,6 +821,18 @@ Cuando una entidad lleva `LocalToShip { ship_entity, local_position, local_orien
 5. Al salir (quitar `LocalToShip`), se bakea la pose mundial y la sim pasa a espacio mundo / GravityZone.
 
 ## Bitácora (más reciente arriba, una línea por tarea)
+- 2026-08-30 [P4-02] Terreno planetario procedural: `game/world/planet_terrain.{hpp,cpp}`
+  — librería pura sin heap. Ruido Perlin 3D + fBm sin dependencias;
+  `planet_terrain_params(body_seed,...)` deriva la forma del planeta (usa el
+  body_seed de P4-01); `planet_height(dir)` acotado a `±elevation_scale`;
+  `cube_sphere_dir` (6 caras, spherify Cobe); `build_planet_patch` rellena buffers
+  fijos del llamante con un parche cubo-esfera desplazado (pos/normal/color por
+  altura/uv) — la unidad que P4-03 streameará. `Rng64` extraído a `rng64.hpp`
+  compartido. Gate `CSC_PLANETGEN_SMOKE=1` (altura acotada, normales unitarias,
+  regeneración byte-idéntica, costura entre parches exacta). Sin render aún (P4-03
+  streaming + P4-08 escena). Verificado: build 0 warnings + PLANETGEN_SMOKE PASS +
+  11 escenas + 6 smokes previos PASS. **Verificación manual pendiente de Miguel:**
+  ninguna todavía (P4-02 es headless; el terreno se ve con P4-08).
 - 2026-08-30 [P4-01] Generador de sistema estelar: `game/world/star_system_gen.{hpp,cpp}`
   — `generate_star_system(seed, StarSystemData&, GeneratedSystemInfo*)` pura, sin
   heap, RNG SplitMix64 (bit-exacto entre plataformas). Estrella + 2-6 planetas en

@@ -13,6 +13,7 @@
 #include "game/flight/weapon_catalog.hpp"
 #include "game/save/save.hpp"
 #include "game/ui/ui.hpp"
+#include "game/world/planet_terrain.hpp"
 #include "game/world/star_system_gen.hpp"
 #include "game/world/world.hpp"
 
@@ -375,6 +376,9 @@ bool setup_universe_test(SceneContext& ctx)
 
     if (std::getenv("CSC_SYSTEMGEN_SMOKE") != nullptr) {
         (void)game::world::star_system_gen_smoke_test();  // P4-01
+    }
+    if (std::getenv("CSC_PLANETGEN_SMOKE") != nullptr) {
+        (void)game::world::planet_terrain_smoke_test();   // P4-02
     }
 
     game::world::StarSystemData system{};
