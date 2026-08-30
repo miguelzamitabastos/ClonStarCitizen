@@ -12,6 +12,7 @@
 #include "game/world/world.hpp"
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 
 namespace csc::scene {
@@ -557,6 +558,88 @@ bool setup_save_load_test(SceneContext& ctx)
     return true;
 }
 
+bool setup_ship_hangar_test(SceneContext& ctx)
+{
+    if (ctx.world == nullptr) {
+        return false;
+    }
+
+    ecs::world_spawn_default_camera(*ctx.world, ctx.aspect);
+    ecs::world_spawn_default_grid(*ctx.world);
+
+    (void)game::economy::load_economy_data(*ctx.world);
+    ctx.world->set<game::economy::PlayerWallet>({200000});
+    ctx.world->set<game::economy::FactionReputation>(game::economy::FactionReputation{});
+
+    game::flight::spawn_projectile_pool(*ctx.world);
+
+    // Parked ship: buying / switching at a kiosk reconfigures THIS entity in
+    // place (P3-03) — same entity the hatch and pilot seat below stay bound to.
+    flecs::entity ship = game::flight::spawn_player_ship(
+        *ctx.world, glm::vec3{0.f, 1.6f, -6.f}, ctx.player_ship_id);
+    if (game::flight::FlightControl* fc = ship.try_get_mut<game::flight::FlightControl>()) {
+        fc->coupled = true;
+    }
+    game::flight::ship_ownership_init(
+        *ctx.world,
+        (ctx.player_ship_id != nullptr) ? ctx.player_ship_id
+                                        : game::flight::kDefaultPlayerShipId);
+
+    // On-foot player on a hangar deck with artificial gravity.
+    constexpr glm::vec3 kDeck{0.f, 2.f, 0.f};
+    (void)game::character::spawn_gravity_zone_box(
+        *ctx.world,
+        kDeck,
+        glm::vec3{18.f, 6.f, 18.f},
+        glm::vec3{0.f, -1.f, 0.f},
+        game::character::kGravityDefault,
+        "HangarGravity");
+    {
+        const ecs::Position pos{kDeck.x, 0.5f, kDeck.z};
+        ctx.world->entity("HangarDeck")
+            .set<ecs::Position>(pos)
+            .set<ecs::PreviousPosition>({pos.x, pos.y, pos.z})
+            .set<ecs::Velocity>({0.f, 0.f, 0.f})
+            .set<ecs::Scale>({10.f})
+            .add<ecs::InstanceTag>();
+    }
+    (void)game::character::spawn_player_character(
+        *ctx.world, glm::vec3{0.f, 0.9f, 5.f}, 0);
+
+    // Board + fly the (reconfigured) ship to feel the difference.
+    (void)game::character::spawn_ship_hatch(
+        *ctx.world, ship.id(), glm::vec3{0.f, 0.9f, 3.2f}, "Enter / exit ship");
+    (void)game::character::spawn_pilot_seat(
+        *ctx.world, ship.id(), glm::vec3{0.f, 0.9f, -1.5f}, "Pilot seat");
+
+    // Dealer kiosks — walk the rank, press F (see console for buy/switch/sell).
+    (void)game::flight::spawn_ship_dealer(
+        *ctx.world, glm::vec3{-4.5f, 1.2f, 2.f}, "ship.fighter.wasp", 42000);
+    (void)game::flight::spawn_ship_dealer(
+        *ctx.world, glm::vec3{-1.5f, 1.2f, 2.f}, "ship.freighter.mule", 88000);
+    (void)game::flight::spawn_ship_dealer(
+        *ctx.world, glm::vec3{1.5f, 1.2f, 2.f}, "ship.explorer.pathfinder", 65000);
+    (void)game::flight::spawn_ship_dealer(
+        *ctx.world, glm::vec3{4.5f, 1.2f, 2.f}, "ship.heavy.bulwark", 120000);
+
+    ctx.world->set<ecs::ControlMode>({ecs::ControlModeKind::OnFoot});
+
+    if (const char* smoke = std::getenv("CSC_HANGAR_SMOKE");
+        smoke != nullptr && smoke[0] == '1') {
+        (void)game::flight::hangar_smoke_test(*ctx.world);
+    }
+
+    ctx.needs_shared_mesh = true;
+    // ship + player + deck + hatch + seat + 4 kiosks + projectiles.
+    ctx.instance_count = 12u + static_cast<u32>(game::flight::kProjectilePoolSize);
+
+    log::log_info(
+        log::LogCategory::Game,
+        "ship_hangar_test: F on a kiosk to buy/switch/sell; F on the seat to fly "
+        "(200000 cr to spend)");
+    return true;
+}
+
 constexpr SceneDesc kScenes[] = {
     {"grid_freelook",
      "Free-look camera + ground grid (minimal baseline)",
@@ -591,6 +674,9 @@ constexpr SceneDesc kScenes[] = {
     {"save_load_test",
      "Persist ship/cargo/mission/rep; F5 save F9 load (P1F)",
      &setup_save_load_test},
+    {"ship_hangar_test",
+     "Buy / switch / sell player ships at a station hangar (P3-03)",
+     &setup_ship_hangar_test},
 };
 
 constexpr std::size_t kSceneCount = sizeof(kScenes) / sizeof(kScenes[0]);

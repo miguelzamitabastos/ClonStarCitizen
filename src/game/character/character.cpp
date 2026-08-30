@@ -7,6 +7,7 @@
 #include "game/ai/ai.hpp"
 #include "game/economy/economy.hpp"
 #include "game/flight/flight.hpp"
+#include "game/flight/ship_catalog.hpp"
 #include "game/save/save.hpp"
 
 #include <algorithm>
@@ -523,6 +524,12 @@ void handle_interact_events(flecs::world& world)
                 world.set<flight::ActiveTurretControl>({tseat->turret, target.id()});
                 log::log_info(log::LogCategory::Core, "Turret seat: → TurretControl");
             }
+            continue;
+        }
+
+        // --- Ship hangar kiosk: buy / switch / sell active ship (P3-03) -----
+        if (const flight::ShipDealer* deal = target.try_get<flight::ShipDealer>()) {
+            (void)flight::ship_dealer_interact(world, *deal);
             continue;
         }
 

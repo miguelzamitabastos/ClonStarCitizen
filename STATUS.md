@@ -1,6 +1,6 @@
 # STATUS
 
-## Fase activa: Fase 3 — Expansión de Contenido — **EN CURSO (2/9)**
+## Fase activa: Fase 3 — Expansión de Contenido — **EN CURSO (3/9)**
 
 Fase 2 validada físicamente por Miguel el 2026-08-30 (probó las 5 escenas de
 `.claude/VERIFICACION-PENDIENTE.md` a mano; solo se ven cuadros porque aún no hay
@@ -18,7 +18,7 @@ es Fase 4). El riesgo explícito de la fase: que se hardcodee contenido en C++ p
 velocidad. Objetivo contrario: añadir una nave / un arma / una misión = editar un
 archivo de datos, nunca tocar el motor.
 
-### Progreso Fase 3 — 2/9
+### Progreso Fase 3 — 3/9
 
 - Pipeline de datos (P3-01, P3-05, P3-08):       [#] 1/3
   - [x] P3-01 Pipeline de datos de nave: stats (masa, empuje, hardpoints, capacidad
@@ -27,10 +27,10 @@ archivo de datos, nunca tocar el motor.
         P3-01 (dep. P1A-08, P1B-06)
   - [ ] P3-08 Herramienta interna (CLI/script) para validar y/o generar entradas de
         catálogo antes de compilar (dep. P3-01, P3-05)
-- Catálogo y naves jugables (P3-02, P3-03):      [#] 1/2
+- Catálogo y naves jugables (P3-02, P3-03):      [##] 2/2
   - [x] P3-02 Catálogo de 4-6 tipos de nave (caza, carguero, exploración,
         multipropósito) usando P3-01 (dep. P3-01)
-  - [ ] P3-03 Hangar y tienda de naves: comprar/vender/cambiar de nave activa,
+  - [x] P3-03 Hangar y tienda de naves: comprar/vender/cambiar de nave activa,
         reutilizando las transacciones de P1C-03 tal cual (dep. P3-02, P1C-03)
 - Mundo y personaje (P3-04, P3-06):              [ ] 0/2
   - [ ] P3-04 Expansión de estaciones/ciudades: más NPCs, tiendas y dadores de
@@ -137,6 +137,35 @@ naves) o se difiere a Fase 6 (pulido).
    Verificado: build limpio + las 8 escenas headless sin errores + `--ship=` con
    cada hull nueva (masa correcta en el log) + `--ship=id.inexistente` (fallback)
    + `CSC_SAVE_SMOKE=1` PASS + `CSC_FORCE_REBASE_SMOKE=1` dispara.
+
+3. **P3-03 hangar de naves:** singleton `flight::ShipOwnership` (lista de ids
+   poseídos + `active_id`) + componente `flight::ShipDealer{id, price}` en un
+   kiosco interactuable (`spawn_ship_dealer`, misma forma que un NPC de economía).
+   Un solo kiosco por nave, **sensible al contexto** al pulsar F (dispatch en
+   `character::handle_interact_events`, antes del hook de economía): no poseída →
+   comprar (si `PlayerWallet.credits >= price`) y equipar; poseída y no activa →
+   cambiar la nave activa; poseída y activa → venderla (reembolso
+   `price * kShipResaleFraction`, 0.6) y volver a la de inicio — la de inicio
+   (`kDefaultPlayerShipId`) nunca se puede vender. **No hay entidad nueva por
+   cambio de nave** (respeta `.cursorrules`: ninguna nave se `destruct`a en vivo):
+   `apply_ship_def_to_player` **reescribe in situ** todos los componentes de stat
+   del `PlayerShip` vivo desde el `ShipDef` (masa/inercia, thrusters, planta,
+   escudo, casco, subsistemas, `ShipSpec`, montajes, escala, capacidad de bodega),
+   conservando pose, velocidad y **contenido** de la bodega; casco/escudo se
+   rellenan al nuevo máximo. `spawn_player_ship` se refactorizó para crear la
+   entidad solo con lo de una vez (pose, tags, bodega) y delegar el resto en el
+   mismo `apply_ship_def_components` — una nave comprada queda configurada
+   exactamente igual que una recién spawneada. La compra/venta usa `PlayerWallet`
+   de P1C tal cual (una nave = ítem con precio), sin comercio paralelo.
+   Escena nueva `ship_hangar_test`: cubierta con gravedad, jugador a pie, 4
+   kioscos (Wasp/Mule/Pathfinder/Bulwark) + escotilla y asiento de piloto para
+   embarcar y volar la nave reconfigurada. Gate headless `CSC_HANGAR_SMOKE=1`
+   (patrón `CSC_SAVE_SMOKE`): compra el caza y comprueba cartera + masa del
+   `PlayerShip` vivo, lo vende y comprueba la reversión, y comprueba que la nave
+   de inicio no se vende — `CSC_HANGAR_SMOKE: PASS`.
+   **Fuera de alcance, anotado:** `ShipOwnership` (como `ShipSpec`) no está en el
+   save v1 — mismo bump de schema pendiente; cargar una partida deja la nave
+   activa que spawnee la escena, no la que estuviera equipada al guardar.
 
 ## Fase 2 — Profundidad de Sistemas — **COMPLETADA y validada** (13/13, validación física 2026-08-30)
 
@@ -394,6 +423,7 @@ demo (`flight_test`, `on_foot_test`, `economy_test`, `universe_test`, `ui_audio_
 | `universe_test` | P1D OK — Estacion-Alfa → espacio (rebase ≥1) → Planeta-01-LZ |
 | `ui_audio_test` | P1E OK — HUD Both, Esc pause, 3 positional sine tones (synthetic PCM) |
 | `save_load_test` | P1F OK — F5/F9 + pause Save/Load; CSC_SAVE_SMOKE |
+| `ship_hangar_test` | P3-03 — kioscos comprar/cambiar/vender nave + asiento piloto; CSC_HANGAR_SMOKE |
 
 ## Decisiones P1F (documentadas)
 1. **Formato (P1F-01):** binario versionado poco-endian con cabecera
@@ -450,6 +480,20 @@ Cuando una entidad lleva `LocalToShip { ship_entity, local_position, local_orien
 5. Al salir (quitar `LocalToShip`), se bakea la pose mundial y la sim pasa a espacio mundo / GravityZone.
 
 ## Bitácora (más reciente arriba, una línea por tarea)
+- 2026-08-30 [P3-03] Hangar de naves: singleton `flight::ShipOwnership` +
+  componente `ShipDealer{id,price}` en kioscos (`spawn_ship_dealer`). Un kiosco
+  por nave, sensible al contexto al pulsar F (dispatch en
+  `character::handle_interact_events`): comprar+equipar / cambiar activa /
+  vender (reembolso 0.6×, la de inicio no se vende). Cambiar de nave **no crea
+  entidad nueva**: `apply_ship_def_to_player` reescribe in situ todos los stats
+  del `PlayerShip` vivo desde el `ShipDef`, conservando pose/velocidad/carga.
+  `spawn_player_ship` refactorizado para compartir `apply_ship_def_components`.
+  Compra/venta con `PlayerWallet` de P1C tal cual. Escena `ship_hangar_test`
+  (cubierta a pie + 4 kioscos + asiento de piloto). Gate `CSC_HANGAR_SMOKE=1`
+  → PASS. Verificado: build 0 warnings + 10 escenas headless + `CSC_SAVE_SMOKE`/
+  `CSC_FORCE_REBASE_SMOKE` OK. **Verificación manual pendiente de Miguel:**
+  comprar 2 naves en el hangar y pilotarlas notando la diferencia (criterio de
+  salida del DoD de Fase 3).
 - 2026-08-30 [P3-02] Catálogo de naves: 4 hulls jugables nuevas en `ships.cfg`
   (`fighter.wasp` / `freighter.mule` / `explorer.pathfinder` / `heavy.bulwark`)
   con masa/empuje/torque/casco/escudo/bodega/hardpoints perceptiblemente

@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 
 namespace csc::game::flight {
 namespace {
@@ -86,6 +87,72 @@ void build_thruster_set(ThrusterSet& set, const ShipDef& def)
     ShipDef fallback{};
     std::snprintf(fallback.id, sizeof(fallback.id), "%s", (id != nullptr) ? id : default_id);
     return fallback;
+}
+
+/// Write every stat component of `ship` from `def`: RigidBody mass/inertia
+/// (pose + velocity untouched), thrusters, power, shield, hull, subsystems,
+/// ShipSpec, weapon mounts, render scale, and CargoHold capacity (slots kept).
+/// Shared by spawn_player_ship (P3-01) and the hangar swap (P3-03) so a bought
+/// ship is configured exactly like a freshly spawned one.
+void apply_ship_def_components(flecs::entity ship, const ShipDef& def)
+{
+    if (RigidBody6DOF* rb = ship.try_get_mut<RigidBody6DOF>()) {
+        rb->mass         = def.mass_kg;
+        rb->inertia_diag = def.inertia_diag;
+    }
+
+    ThrusterSet thrusters{};
+    build_thruster_set(thrusters, def);
+    ship.set<ThrusterSet>(thrusters);
+
+    PowerPlant plant{};
+    plant.output_rate = def.power_output;
+    plant.capacity    = def.power_capacity;
+    plant.stored      = def.power_capacity;
+    ship.set<PowerPlant>(plant);
+
+    ShieldGenerator shield{};
+    shield.max_capacity = def.shield_capacity;
+    shield.current      = def.shield_capacity;
+    shield.regen_rate   = def.shield_regen;
+    shield.power_draw   = def.shield_power_draw;
+    ship.set<ShieldGenerator>(shield);
+
+    ShipHull hull{};
+    hull.max_hp = def.hull_hp;
+    hull.hp     = def.hull_hp;
+    hull.radius = def.hull_radius;
+    ship.set<ShipHull>(hull);
+
+    // P2-02: independently damageable banks (ENG / SHD / WPN / SEN).
+    ShipSubsystems subsystems{};
+    for (u32 i = 0; i < combat::kSubsystemCount; ++i) {
+        subsystems.items[i] = {def.subsystem_hp[i], def.subsystem_hp[i]};
+    }
+    ship.set<ShipSubsystems>(subsystems);
+
+    ship.set<ShipSpec>(ShipSpec{def.max_torque_nm});
+
+    // Hardpoint count + placement is data (P3-01); the weapon fitted to each
+    // mount stays the Fase 1/2 default until P3-05 (weapon catalog).
+    WeaponMountSet weapons{};
+    weapons.count = (def.weapon_mount_count == 0) ? 1u : def.weapon_mount_count;
+    for (u32 i = 0; i < weapons.count && i < kMaxWeaponMounts; ++i) {
+        weapons.mounts[i].local_offset = def.weapon_mount_offset[i];
+        weapons.mounts[i].cooldown     = 0.22f;
+        weapons.mounts[i].energy_cost  = 12.f;
+        weapons.mounts[i].damage       = 60.f;
+        weapons.mounts[i].range        = 500.f;
+        weapons.mounts[i].hitscan      = false;
+    }
+    ship.set<WeaponMountSet>(weapons);
+
+    ship.set<ecs::Scale>({def.render_scale});
+
+    if (economy::CargoHold* hold = ship.try_get_mut<economy::CargoHold>()) {
+        hold->capacity_volume = def.cargo_volume;
+        hold->capacity_mass   = def.cargo_mass;
+    }
 }
 
 [[nodiscard]] glm::vec3 body_to_world(const glm::quat& q, const glm::vec3& v)
@@ -1321,98 +1388,281 @@ void register_systems(flecs::world& world)
 flecs::entity spawn_player_ship(
     flecs::world& world, const glm::vec3& position, const char* ship_id)
 {
-    // P3-01: every stat below comes from the ShipDef (ships.cfg), not literals.
+    // P3-01: every stat comes from the ShipDef (ships.cfg). The entity is
+    // created with only the one-time pieces (pose, tags, cargo hold); every
+    // stat component is then written by the shared apply_ship_def_components,
+    // exactly the path a hangar-bought ship takes (P3-03).
     const ShipDef def = resolve_ship_def(world, ship_id, kDefaultPlayerShipId);
 
     RigidBody6DOF rb{};
-    rb.position     = position;
-    rb.orientation  = glm::quat{1.f, 0.f, 0.f, 0.f};
-    rb.mass         = def.mass_kg;
-    rb.inertia_diag = def.inertia_diag;
-
-    ThrusterSet thrusters{};
-    build_thruster_set(thrusters, def);
-
-    PowerPlant plant{};
-    plant.output_rate = def.power_output;
-    plant.capacity    = def.power_capacity;
-    plant.stored      = def.power_capacity;
-
-    ShieldGenerator shield{};
-    shield.max_capacity = def.shield_capacity;
-    shield.current      = def.shield_capacity;
-    shield.regen_rate   = def.shield_regen;
-    shield.power_draw   = def.shield_power_draw;
-
-    ShipHull hull{};
-    hull.max_hp = def.hull_hp;
-    hull.hp     = def.hull_hp;
-    hull.radius = def.hull_radius;
-
-    // Hardpoint count + placement is data (P3-01); the weapon fitted to each
-    // mount stays the Fase 1/2 default until P3-05 (weapon catalog).
-    WeaponMountSet weapons{};
-    weapons.count = (def.weapon_mount_count == 0) ? 1u : def.weapon_mount_count;
-    for (u32 i = 0; i < weapons.count && i < kMaxWeaponMounts; ++i) {
-        weapons.mounts[i].local_offset = def.weapon_mount_offset[i];
-        weapons.mounts[i].cooldown     = 0.22f;
-        weapons.mounts[i].energy_cost  = 12.f;
-        weapons.mounts[i].damage       = 60.f;
-        weapons.mounts[i].range        = 500.f;
-        weapons.mounts[i].hitscan      = false;
-    }
+    rb.position    = position;
+    rb.orientation = glm::quat{1.f, 0.f, 0.f, 0.f};
 
     FlightControl ctrl{};
     ctrl.coupled = true;
-
-    // P2-02: independently damageable banks (ENG / SHD / WPN / SEN).
-    ShipSubsystems subsystems{};
-    for (u32 i = 0; i < combat::kSubsystemCount; ++i) {
-        subsystems.items[i] = {def.subsystem_hp[i], def.subsystem_hp[i]};
-    }
 
     const ecs::Position pos{position.x, position.y, position.z};
 
     flecs::entity ship =
         world.entity("PlayerShip")
             .set<RigidBody6DOF>(rb)
-            .set<ThrusterSet>(thrusters)
-            .set<PowerPlant>(plant)
-            .set<ShieldGenerator>(shield)
-            .set<ShipHull>(hull)
-            .set<ShipSubsystems>(subsystems)
-            .set<ShipSpec>(ShipSpec{def.max_torque_nm})
             .set<AeroProfile>(AeroProfile{})
-            .set<WeaponMountSet>(weapons)
             .set<FlightControl>(ctrl)
             .set<ecs::Position>(pos)
             .set<ecs::PreviousPosition>({pos.x, pos.y, pos.z})
             .set<ecs::Velocity>({0.f, 0.f, 0.f})
             .set<ecs::Orientation>({rb.orientation})
-            .set<ecs::Scale>({def.render_scale})
             .add<ecs::InstanceTag>()
             .add<ecs::KinematicFromRigidBody>()
             .add<PlayerShip>();
 
     economy::attach_cargo_hold_if_missing(ship);
-    if (auto* hold = ship.try_get_mut<economy::CargoHold>()) {
-        hold->capacity_volume = def.cargo_volume;
-        hold->capacity_mass   = def.cargo_mass;
-    }
+    apply_ship_def_components(ship, def);
     (void)save::assign_persistent_id(world, ship);
 
     log::log_info(
         log::LogCategory::Core,
-        "Spawned player ship '%s' (%s) at (%.1f, %.1f, %.1f) mass=%.0f thrusters=%u",
+        "Spawned player ship '%s' (%s) at (%.1f, %.1f, %.1f) mass=%.0f",
         def.id,
         def.display_name,
         static_cast<double>(position.x),
         static_cast<double>(position.y),
         static_cast<double>(position.z),
-        static_cast<double>(rb.mass),
-        thrusters.count);
+        static_cast<double>(def.mass_kg));
 
     return ship;
+}
+
+// --- P3-03: ship ownership + hangar dealer -----------------------------------
+
+bool ship_owns(const ShipOwnership& own, const char* id)
+{
+    if (id == nullptr) {
+        return false;
+    }
+    for (u32 i = 0; i < own.owned_count && i < kMaxShipDefs; ++i) {
+        if (std::strcmp(own.owned_ids[i], id) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void ship_ownership_init(flecs::world& world, const char* starter_id)
+{
+    if (world.try_get<ShipOwnership>() != nullptr) {
+        return;
+    }
+    const char* id =
+        (starter_id != nullptr && starter_id[0] != '\0') ? starter_id : kDefaultPlayerShipId;
+    ShipOwnership own{};
+    std::snprintf(own.owned_ids[0], kShipIdBytes, "%s", id);
+    own.owned_count = 1;
+    std::snprintf(own.active_id, kShipIdBytes, "%s", id);
+    world.set<ShipOwnership>(own);
+}
+
+void apply_ship_def_to_player(flecs::world& world, const ShipDef& def)
+{
+    flecs::entity found{};
+    world.each([&](flecs::entity e, PlayerShip) {
+        if (!found.is_alive()) {
+            found = e;
+        }
+    });
+    if (!found.is_alive()) {
+        log::log_warn(log::LogCategory::Game, "apply_ship_def_to_player: no PlayerShip entity");
+        return;
+    }
+    apply_ship_def_components(found, def);
+    log::log_info(
+        log::LogCategory::Game,
+        "Player ship reconfigured to '%s' (%s) mass=%.0f torque=%.0f cargo=%.0f",
+        def.id,
+        def.display_name,
+        static_cast<double>(def.mass_kg),
+        static_cast<double>(def.max_torque_nm),
+        static_cast<double>(def.cargo_volume));
+}
+
+namespace {
+
+void ownership_remove(ShipOwnership& own, const char* id)
+{
+    for (u32 i = 0; i < own.owned_count; ++i) {
+        if (std::strcmp(own.owned_ids[i], id) != 0) {
+            continue;
+        }
+        for (u32 j = i; j + 1 < own.owned_count; ++j) {
+            std::snprintf(own.owned_ids[j], kShipIdBytes, "%s", own.owned_ids[j + 1]);
+        }
+        own.owned_ids[--own.owned_count][0] = '\0';
+        return;
+    }
+}
+
+}  // namespace
+
+bool ship_dealer_interact(flecs::world& world, const ShipDealer& deal)
+{
+    ShipOwnership*         own    = world.try_get_mut<ShipOwnership>();
+    economy::PlayerWallet* wallet = world.try_get_mut<economy::PlayerWallet>();
+    const ShipCatalog*     cat    = world.try_get<ShipCatalog>();
+    if (own == nullptr || wallet == nullptr || cat == nullptr) {
+        log::log_warn(log::LogCategory::Game, "ship dealer: ownership/wallet/catalog missing");
+        return false;
+    }
+    const ShipDef* def = find_ship_def(*cat, deal.id);
+    if (def == nullptr) {
+        log::log_warn(log::LogCategory::Game, "ship dealer: '%s' not in catalog", deal.id);
+        return false;
+    }
+
+    const bool owned  = ship_owns(*own, deal.id);
+    const bool active = std::strcmp(own->active_id, deal.id) == 0;
+
+    if (!owned) {
+        if (wallet->credits < deal.price) {
+            log::log_info(
+                log::LogCategory::Game,
+                "Hangar: need %d cr for %s (have %d)",
+                deal.price,
+                def->display_name,
+                wallet->credits);
+            return false;
+        }
+        if (own->owned_count >= kMaxShipDefs) {
+            log::log_warn(log::LogCategory::Game, "Hangar: ownership list full");
+            return false;
+        }
+        wallet->credits -= deal.price;
+        std::snprintf(own->owned_ids[own->owned_count++], kShipIdBytes, "%s", deal.id);
+        std::snprintf(own->active_id, kShipIdBytes, "%s", deal.id);
+        apply_ship_def_to_player(world, *def);
+        log::log_info(
+            log::LogCategory::Game,
+            "Hangar: bought + equipped %s for %d cr (wallet=%d)",
+            def->display_name,
+            deal.price,
+            wallet->credits);
+        return true;
+    }
+
+    if (!active) {
+        std::snprintf(own->active_id, kShipIdBytes, "%s", deal.id);
+        apply_ship_def_to_player(world, *def);
+        log::log_info(log::LogCategory::Game, "Hangar: switched to %s", def->display_name);
+        return true;
+    }
+
+    // Owned and already active → trade it back in (never the starter ship).
+    if (std::strcmp(deal.id, kDefaultPlayerShipId) == 0) {
+        log::log_info(log::LogCategory::Game, "Hangar: can't sell your starter ship");
+        return false;
+    }
+    const i32 refund =
+        static_cast<i32>(static_cast<f32>(deal.price) * kShipResaleFraction);
+    wallet->credits += refund;
+    ownership_remove(*own, deal.id);
+    std::snprintf(own->active_id, kShipIdBytes, "%s", kDefaultPlayerShipId);
+    if (const ShipDef* starter = find_ship_def(*cat, kDefaultPlayerShipId)) {
+        apply_ship_def_to_player(world, *starter);
+    }
+    log::log_info(
+        log::LogCategory::Game,
+        "Hangar: sold %s for %d cr, back to starter (wallet=%d)",
+        def->display_name,
+        refund,
+        wallet->credits);
+    return true;
+}
+
+bool hangar_smoke_test(flecs::world& world)
+{
+    const economy::PlayerWallet* w0   = world.try_get<economy::PlayerWallet>();
+    const ShipOwnership*         own0 = world.try_get<ShipOwnership>();
+    if (w0 == nullptr || own0 == nullptr) {
+        log::log_error(log::LogCategory::Game, "CSC_HANGAR_SMOKE: FAIL (no wallet/ownership)");
+        return false;
+    }
+
+    const auto player_mass = [&world]() -> f32 {
+        f32 m = -1.f;
+        world.each([&](flecs::entity e, PlayerShip) {
+            if (const RigidBody6DOF* rb = e.try_get<RigidBody6DOF>()) {
+                m = rb->mass;
+            }
+        });
+        return m;
+    };
+    const auto near_eq = [](f32 a, f32 b) { return std::fabs(a - b) < 1.f; };
+
+    const i32 start_credits = w0->credits;
+    const f32 start_mass    = player_mass();
+
+    ShipDealer fighter{};
+    std::snprintf(fighter.id, sizeof(fighter.id), "%s", "ship.fighter.wasp");
+    fighter.price = 42000;
+
+    bool ok = ship_dealer_interact(world, fighter); // buy + equip
+    {
+        const economy::PlayerWallet* w   = world.try_get<economy::PlayerWallet>();
+        const ShipOwnership*         own = world.try_get<ShipOwnership>();
+        ok = ok && w != nullptr && w->credits == start_credits - fighter.price;
+        ok = ok && own != nullptr && std::strcmp(own->active_id, fighter.id) == 0;
+        ok = ok && player_mass() < start_mass; // the fighter is lighter
+    }
+
+    ok = ok && ship_dealer_interact(world, fighter); // now active → sell back
+    {
+        const economy::PlayerWallet* w   = world.try_get<economy::PlayerWallet>();
+        const ShipOwnership*         own = world.try_get<ShipOwnership>();
+        const i32 refund =
+            static_cast<i32>(static_cast<f32>(fighter.price) * kShipResaleFraction);
+        ok = ok && w != nullptr && w->credits == start_credits - fighter.price + refund;
+        ok = ok && own != nullptr && std::strcmp(own->active_id, kDefaultPlayerShipId) == 0;
+        ok = ok && own != nullptr && !ship_owns(*own, fighter.id);
+        ok = ok && near_eq(player_mass(), start_mass); // reverted to starter
+    }
+
+    ShipDealer starter{};
+    std::snprintf(starter.id, sizeof(starter.id), "%s", kDefaultPlayerShipId);
+    ok = ok && !ship_dealer_interact(world, starter); // starter can't be sold
+
+    log::log_info(log::LogCategory::Game, "CSC_HANGAR_SMOKE: %s", ok ? "PASS" : "FAIL");
+    return ok;
+}
+
+flecs::entity spawn_ship_dealer(
+    flecs::world& world, const glm::vec3& position, const char* id, i32 price)
+{
+    ShipDealer deal{};
+    std::snprintf(deal.id, sizeof(deal.id), "%s", (id != nullptr) ? id : "");
+    deal.price = price;
+
+    const ShipCatalog* cat = world.try_get<ShipCatalog>();
+    const ShipDef*     def = (cat != nullptr) ? find_ship_def(*cat, deal.id) : nullptr;
+
+    // %.18s keeps the worst case (18 + " " + 11-digit int + "cr") within the
+    // 32-byte prompt buffer, so no truncation warning.
+    character::InteractablePrompt pr{};
+    std::snprintf(
+        pr.label,
+        sizeof(pr.label),
+        "%.18s %dcr",
+        (def != nullptr) ? def->display_name : deal.id,
+        price);
+
+    const ecs::Position pos{position.x, position.y, position.z};
+    return world.entity()
+        .set<ShipDealer>(deal)
+        .set<character::InteractablePrompt>(pr)
+        .set<ecs::Position>(pos)
+        .set<ecs::PreviousPosition>({pos.x, pos.y, pos.z})
+        .set<ecs::Velocity>({0.f, 0.f, 0.f})
+        .set<ecs::Scale>({0.6f})
+        .add<character::Interactable>()
+        .add<ecs::InstanceTag>();
 }
 
 flecs::entity spawn_damage_target(flecs::world& world, const glm::vec3& position, f32 scale)

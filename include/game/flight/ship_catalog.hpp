@@ -101,4 +101,54 @@ bool load_ship_catalog(flecs::world& world);
 [[nodiscard]] const ShipDef* find_ship_def(const ShipCatalog& cat, const char* id);
 [[nodiscard]] const ShipDef* find_ship_def(flecs::world& world, const char* id);
 
+// --- P3-03: ship ownership + hangar dealer ----------------------------------
+
+/// Trade-in value = purchase price × this (you lose the rest selling back).
+inline constexpr f32 kShipResaleFraction = 0.6f;
+
+/// Ships the player owns + which one is active. In-session only for now — not
+/// serialised in the save v1 schema (same debt as ShipSpec; the P1F schema bump
+/// that resolves the Fase 2 components resolves this too).
+struct ShipOwnership {
+    char owned_ids[kMaxShipDefs][kShipIdBytes]{};
+    u32  owned_count = 0;
+    char active_id[kShipIdBytes]{};
+};
+
+/// A hangar kiosk bound to one catalog ship. Interacting with it (P3-03):
+///  - not owned  → buy it (if credits suffice) and equip it now;
+///  - owned, not active → switch the active ship to it;
+///  - owned and active  → sell it back (unless it is the starter ship).
+struct ShipDealer {
+    char id[kShipIdBytes]{};
+    i32  price = 0;
+};
+
+/// True if `id` is in the owned list.
+[[nodiscard]] bool ship_owns(const ShipOwnership& own, const char* id);
+
+/// Create the ShipOwnership singleton if absent: owns `starter_id` only, with it
+/// as the active ship. `starter_id` nullptr/empty → kDefaultPlayerShipId.
+void ship_ownership_init(flecs::world& world, const char* starter_id);
+
+/// Overwrite every stat component of the live PlayerShip entity from `def`,
+/// keeping its world pose, velocity and cargo contents (hull/shield refill to
+/// the new maxima). Warns and does nothing if there is no PlayerShip.
+void apply_ship_def_to_player(flecs::world& world, const ShipDef& def);
+
+/// Resolve one ShipDealer interaction against ShipOwnership + PlayerWallet +
+/// ShipCatalog singletons. Returns true if ownership / active ship / wallet
+/// changed; logs the outcome either way.
+[[nodiscard]] bool ship_dealer_interact(flecs::world& world, const ShipDealer& deal);
+
+/// Spawn a hangar kiosk interactable for catalog ship `id` at `price`
+/// (character::Interactable + InteractablePrompt, same shape as an economy NPC).
+[[nodiscard]] flecs::entity spawn_ship_dealer(
+    flecs::world& world, const glm::vec3& position, const char* id, i32 price);
+
+/// Headless P3-03 check (scene gate CSC_HANGAR_SMOKE=1): buy the fighter, assert
+/// wallet + live PlayerShip mass changed, sell it back, assert the revert, and
+/// assert the starter ship can't be sold. Logs `CSC_HANGAR_SMOKE: PASS|FAIL`.
+[[nodiscard]] bool hangar_smoke_test(flecs::world& world);
+
 }  // namespace csc::game::flight
