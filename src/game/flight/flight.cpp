@@ -6,6 +6,7 @@
 #include "game/character/character.hpp"
 #include "game/economy/economy.hpp"
 #include "game/flight/ship_catalog.hpp"
+#include "game/flight/weapon_catalog.hpp"
 #include "game/save/save.hpp"
 
 #include <algorithm>
@@ -134,16 +135,30 @@ void apply_ship_def_components(flecs::entity ship, const ShipDef& def)
     ship.set<ShipSpec>(ShipSpec{def.max_torque_nm});
 
     // Hardpoint count + placement is data (P3-01); the weapon fitted to each
-    // mount stays the Fase 1/2 default until P3-05 (weapon catalog).
+    // mount is named by id and its stats come from the weapon catalog (P3-05).
+    const WeaponCatalog* wcat = ship.world().try_get<WeaponCatalog>();
     WeaponMountSet weapons{};
     weapons.count = (def.weapon_mount_count == 0) ? 1u : def.weapon_mount_count;
     for (u32 i = 0; i < weapons.count && i < kMaxWeaponMounts; ++i) {
         weapons.mounts[i].local_offset = def.weapon_mount_offset[i];
-        weapons.mounts[i].cooldown     = 0.22f;
-        weapons.mounts[i].energy_cost  = 12.f;
-        weapons.mounts[i].damage       = 60.f;
-        weapons.mounts[i].range        = 500.f;
-        weapons.mounts[i].hitscan      = false;
+        const char* wid =
+            (def.weapon_id[i][0] != '\0') ? def.weapon_id[i] : kDefaultShipWeaponId;
+        const WeaponDef* wd = (wcat != nullptr) ? find_weapon_def(*wcat, wid) : nullptr;
+        if (wd != nullptr) {
+            weapons.mounts[i].cooldown    = wd->cooldown;
+            weapons.mounts[i].energy_cost = wd->energy_cost;
+            weapons.mounts[i].damage      = wd->damage;
+            weapons.mounts[i].range       = wd->range;
+            weapons.mounts[i].heat_max    = wd->heat_max;
+            weapons.mounts[i].hitscan     = wd->hitscan;
+        } else {
+            // Fase 1/2 fixed gun — same fallback contract as the ShipDef (P3-01).
+            weapons.mounts[i].cooldown    = 0.22f;
+            weapons.mounts[i].energy_cost = 12.f;
+            weapons.mounts[i].damage      = 60.f;
+            weapons.mounts[i].range       = 500.f;
+            weapons.mounts[i].hitscan     = false;
+        }
     }
     ship.set<WeaponMountSet>(weapons);
 
@@ -1753,17 +1768,31 @@ flecs::entity spawn_turret(
     const glm::vec3& local_offset,
     u32              faction_id,
     bool             requires_gunner,
-    const char*      name)
+    const char*      name,
+    const char*      weapon_id)
 {
     TurretMount mount{};
     mount.ship            = ship;
     mount.local_offset    = local_offset;
     mount.requires_gunner = requires_gunner;
-    mount.weapon.cooldown = 0.5f;
-    mount.weapon.energy_cost = 10.f;
-    mount.weapon.damage      = 35.f;
-    mount.weapon.range       = 350.f;
-    mount.weapon.hitscan     = false;
+
+    // P3-05: turret gun stats come from the weapon catalog by id.
+    const char* wid =
+        (weapon_id != nullptr && weapon_id[0] != '\0') ? weapon_id : kDefaultTurretWeaponId;
+    if (const WeaponDef* wd = find_weapon_def(world, wid)) {
+        mount.weapon.cooldown    = wd->cooldown;
+        mount.weapon.energy_cost = wd->energy_cost;
+        mount.weapon.damage      = wd->damage;
+        mount.weapon.range       = wd->range;
+        mount.weapon.heat_max    = wd->heat_max;
+        mount.weapon.hitscan     = wd->hitscan;
+    } else {
+        mount.weapon.cooldown    = 0.5f;
+        mount.weapon.energy_cost = 10.f;
+        mount.weapon.damage      = 35.f;
+        mount.weapon.range       = 350.f;
+        mount.weapon.hitscan     = false;
+    }
 
     ai::AiAgent agent{};
     agent.detection_range      = 400.f;

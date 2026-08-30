@@ -1,6 +1,6 @@
 # STATUS
 
-## Fase activa: Fase 3 — Expansión de Contenido — **EN CURSO (3/9)**
+## Fase activa: Fase 3 — Expansión de Contenido — **EN CURSO (4/9)**
 
 Fase 2 validada físicamente por Miguel el 2026-08-30 (probó las 5 escenas de
 `.claude/VERIFICACION-PENDIENTE.md` a mano; solo se ven cuadros porque aún no hay
@@ -18,12 +18,12 @@ es Fase 4). El riesgo explícito de la fase: que se hardcodee contenido en C++ p
 velocidad. Objetivo contrario: añadir una nave / un arma / una misión = editar un
 archivo de datos, nunca tocar el motor.
 
-### Progreso Fase 3 — 3/9
+### Progreso Fase 3 — 4/9
 
-- Pipeline de datos (P3-01, P3-05, P3-08):       [#] 1/3
+- Pipeline de datos (P3-01, P3-05, P3-08):       [##] 2/3
   - [x] P3-01 Pipeline de datos de nave: stats (masa, empuje, hardpoints, capacidad
         de carga) en archivos de configuración, no en código (dep. P1A-01, P0-05)
-  - [ ] P3-05 Catálogo de armas/equipamiento dirigido por datos, mismo patrón que
+  - [x] P3-05 Catálogo de armas/equipamiento dirigido por datos, mismo patrón que
         P3-01 (dep. P1A-08, P1B-06)
   - [ ] P3-08 Herramienta interna (CLI/script) para validar y/o generar entradas de
         catálogo antes de compilar (dep. P3-01, P3-05)
@@ -166,6 +166,35 @@ naves) o se difiere a Fase 6 (pulido).
    **Fuera de alcance, anotado:** `ShipOwnership` (como `ShipSpec`) no está en el
    save v1 — mismo bump de schema pendiente; cargar una partida deja la nave
    activa que spawnee la escena, no la que estuviera equipada al guardar.
+
+4. **P3-05 catálogo de armas:** mismo patrón que P3-01 — `assets/data/weapons.cfg`
+   (`[[weapon]]`) → singleton `flight::WeaponCatalog` de `WeaponDef` POD
+   (`kMaxWeaponDefs=24`, sin heap; campos: damage/cooldown/energy_cost/heat_max/
+   range/hitscan). `id` de texto único (`"weapon.<montaje>.<nombre>"`); duplicado/
+   ausente = carga `log_error` INVÁLIDA (dura → P3-09). `ShipDef` gana
+   `weapon_id[kMaxWeaponMounts][]` (`weapon_id_N` en `ships.cfg`); vacío →
+   `kDefaultShipWeaponId` (`weapon.fixed.repeater`). `apply_ship_def_components`
+   (P3-01/P3-03) y `spawn_turret` (nuevo parámetro `weapon_id` opcional, default
+   `weapon.turret.repeater`) copian las stats del `WeaponDef` sobre el
+   `WeaponMount` vivo; sin catálogo o id desconocido → arma fija de Fase 1/2
+   (mismo contrato de fallback que P3-01). `scene_setup_by_name` carga
+   **weapons antes que ships** y luego corre `validate_ship_weapon_refs`:
+   cada `weapon_id` de cada nave debe resolver en el `WeaponCatalog` o se emite
+   `log_error` "ship 'X' mount N references unknown weapon 'Y'" +
+   "reference check FAILED" (esta es la comprobación de "referencias resolubles"
+   del roadmap; la dura que bloquea build sigue siendo P3-09). Contenido:
+   4 armas — `weapon.fixed.repeater` (== gun hardcodeado Fase 1/2: 60/0.22/12/500),
+   `weapon.fixed.cannon` (130/0.7/30/650), `weapon.fixed.laser` (32/0.1/8/800,
+   hitscan), `weapon.turret.repeater` (== torreta Fase 2: 35/0.5/10/350). Las 6
+   naves referencian armas del catálogo (Kestrel/Wasp/Skiff repeater, Mule/Bulwark
+   cannon, Pathfinder laser) → cero cambio de comportamiento para las de Fase 1/2.
+   **Fuera de alcance, anotado:** el catálogo de ítems a pie (`character.cpp`
+   `kItemCatalog`: Rifle/Pistola/Medkit/Munición) sigue siendo una tabla `constexpr`
+   en C++ — se pasará a datos con P3-06 (trajes/armadura) o P3-09 si hace falta,
+   mismo patrón. `velocidad de proyectil` sigue siendo la global `kProjectileSpeed`.
+   Verificado: build limpio (0 warnings) + 10 escenas headless (`ship<->weapon
+   references OK` en todas) + `CSC_SAVE_SMOKE`/`CSC_HANGAR_SMOKE` PASS + test
+   negativo (`weapon_id_0` colgante inyectado → 2 `log_error`, sin crash).
 
 ## Fase 2 — Profundidad de Sistemas — **COMPLETADA y validada** (13/13, validación física 2026-08-30)
 
@@ -480,6 +509,22 @@ Cuando una entidad lleva `LocalToShip { ship_entity, local_position, local_orien
 5. Al salir (quitar `LocalToShip`), se bakea la pose mundial y la sim pasa a espacio mundo / GravityZone.
 
 ## Bitácora (más reciente arriba, una línea por tarea)
+- 2026-08-30 [P3-05] Catálogo de armas: `assets/data/weapons.cfg` (`[[weapon]]`)
+  → singleton `flight::WeaponCatalog`/`WeaponDef` (POD, `kMaxWeaponDefs=24`), mismo
+  parser/validación que `ship_catalog` (id de texto único, dup/ausente = carga
+  INVÁLIDA). `ShipDef.weapon_id[N]` (`weapon_id_N` en `ships.cfg`) y `spawn_turret`
+  (nuevo `weapon_id` opcional) nombran el arma; `apply_ship_def_components` /
+  `spawn_turret` copian las stats del `WeaponDef` sobre el `WeaponMount`.
+  `scene_setup_by_name` carga weapons→ships→`validate_ship_weapon_refs`
+  (referencia nave→arma colgante = `log_error`, la dura es P3-09). 4 armas
+  (repeater/cannon/laser/turret-repeater); `weapon.fixed.repeater` y
+  `weapon.turret.repeater` reproducen exactamente el gun y la torreta de Fase 1/2
+  → cero cambio de comportamiento. Catálogo de ítems a pie sigue hardcodeado
+  (anotado, se hará con P3-06/P3-09). Verificado: build 0 warnings + 10 escenas
+  headless (`ship<->weapon references OK`) + `CSC_SAVE_SMOKE`/`CSC_HANGAR_SMOKE`
+  PASS + test negativo (weapon_id colgante). **Verificación manual pendiente de
+  Miguel:** notar que Mule/Bulwark (cañón) y Pathfinder (láser) disparan distinto
+  al repetidor de la Kestrel.
 - 2026-08-30 [P3-03] Hangar de naves: singleton `flight::ShipOwnership` +
   componente `ShipDealer{id,price}` en kioscos (`spawn_ship_dealer`). Un kiosco
   por nave, sensible al contexto al pulsar F (dispatch en

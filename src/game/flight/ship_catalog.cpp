@@ -177,6 +177,13 @@ bool apply_ship_kv(ShipDef& def, const char* key, const char* value)
             (n > kMaxTurretHardpoints) ? kMaxTurretHardpoints : static_cast<u32>(n);
         return true;
     }
+    if (indexed_key(key, "weapon_id_", idx)) {
+        if (idx >= kMaxWeaponMounts) {
+            return false;
+        }
+        std::snprintf(def.weapon_id[idx], kWeaponIdBytes, "%s", value);
+        return true;
+    }
     if (indexed_key(key, "weapon_mount_", idx)) {
         if (idx >= kMaxWeaponMounts) {
             return false;

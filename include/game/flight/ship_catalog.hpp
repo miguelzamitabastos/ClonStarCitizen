@@ -4,6 +4,7 @@
 #include "engine/math/glm.hpp"
 #include "game/combat/damage.hpp"
 #include "game/flight/flight.hpp"
+#include "game/flight/weapon_catalog.hpp"
 
 #include <flecs.h>
 
@@ -60,9 +61,11 @@ struct ShipDef {
     // P2-02 subsystem banks: max hp per ENG/SHD/WPN/SEN (combat::subsystem_index order).
     f32 subsystem_hp[combat::kSubsystemCount] = {300.f, 250.f, 200.f, 150.f};
 
-    // Weapon hardpoints (the weapon fitted to each is P3-05; P3-01 only places them).
+    // Weapon hardpoints: count + placement (P3-01) and, per mount, the catalog
+    // id of the weapon fitted (P3-05). Empty weapon_id → kDefaultShipWeaponId.
     u32       weapon_mount_count = 1;
     glm::vec3 weapon_mount_offset[kMaxWeaponMounts] = {{0.f, -0.5f, -3.f}, {0.f, 0.f, 0.f}};
+    char      weapon_id[kMaxWeaponMounts][kWeaponIdBytes]{};
 
     // Turret hardpoints (P2-03): where a turret CAN be mounted on this hull.
     u32       turret_hardpoint_count = 0;

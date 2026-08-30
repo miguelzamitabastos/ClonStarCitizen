@@ -281,13 +281,16 @@ void map_flight_control_to_thrusters(
 
 /// P2-03: spawn a turret mounted on `ship`. `faction_id` feeds the shared AI
 /// (ai::FactionMember); detection uses the host ship sensors (ai::SensorLink).
+/// P3-05: `weapon_id` names a WeaponDef in the weapon catalog; nullptr →
+/// kDefaultTurretWeaponId. Unknown id / missing catalog → built-in turret gun.
 [[nodiscard]] flecs::entity spawn_turret(
     flecs::world&    world,
     flecs::entity_t  ship,
     const glm::vec3& local_offset,
     u32              faction_id,
     bool             requires_gunner,
-    const char*      name);
+    const char*      name,
+    const char*      weapon_id = nullptr);
 
 /// NPC ship platform: RigidBody + hull/shield/power/subsystems (P2-02) but no
 /// player control. Movement AI arrives with encounters (P2-12).
