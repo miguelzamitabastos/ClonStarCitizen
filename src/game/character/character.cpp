@@ -5,6 +5,7 @@
 #include "engine/ecs/world.hpp"
 #include "engine/log/log.hpp"
 #include "game/ai/ai.hpp"
+#include "game/character/suit_catalog.hpp"
 #include "game/economy/economy.hpp"
 #include "game/flight/flight.hpp"
 #include "game/flight/ship_catalog.hpp"
@@ -527,6 +528,12 @@ void handle_interact_events(flecs::world& world)
             continue;
         }
 
+        // --- Suit locker: equip a suit on the player (P3-06) ---------------
+        if (const SuitLocker* locker = target.try_get<SuitLocker>()) {
+            (void)equip_player_suit(world, locker->suit_id);
+            continue;
+        }
+
         // --- Ship hangar kiosk: buy / switch / sell active ship (P3-03) -----
         if (const flight::ShipDealer* deal = target.try_get<flight::ShipDealer>()) {
             (void)flight::ship_dealer_interact(world, *deal);
@@ -810,21 +817,40 @@ void step_locomotion(flecs::world& world, f32 dt, const input::ActionState* acti
             wish *= 1.f / std::sqrt(wish_len2);
         }
 
+        // P3-06: the worn suit gates EVA thrust (propellant) and scales walk
+        // speed. NPCs have no Suit → unlimited EVA / normal speed as before.
+        Suit* suit = e.try_get_mut<Suit>();
+
         if (eva) {
             cc.grounded = false;
-            if (wish_len2 > 1e-8f) {
+            const bool thrusting = wish_len2 > 1e-8f;
+            bool       has_fuel  = true;
+            if (suit != nullptr && suit->eva_capacity > 0.f) {
+                has_fuel = suit->eva_charge > 0.f;
+                if (thrusting && has_fuel) {
+                    suit->eva_charge =
+                        std::max(0.f, suit->eva_charge - suit->eva_drain_per_sec * dt);
+                }
+            }
+            if (thrusting && has_fuel) {
                 cc.velocity += wish * (cc.eva_thrust * dt);
             }
             // Light damping so EVA is controllable.
             cc.velocity *= std::exp(-0.35f * dt);
         } else {
+            if (suit != nullptr && suit->eva_charge < suit->eva_capacity) {
+                suit->eva_charge = std::min(
+                    suit->eva_capacity, suit->eva_charge + suit->eva_recharge_per_sec * dt);
+            }
+            const f32 walk_speed =
+                cc.move_speed * ((suit != nullptr) ? suit->move_speed_mult : 1.f);
             const glm::vec3 g_accel = grav.direction * grav.magnitude;
             // Horizontal wish at move_speed; vertical from gravity / jump.
             glm::vec3 horiz = cc.velocity;
             // Project out gravity axis (demo: Y).
             horiz.y = 0.f;
             if (wish_len2 > 1e-8f) {
-                horiz = glm::vec3{wish.x, 0.f, wish.z} * cc.move_speed;
+                horiz = glm::vec3{wish.x, 0.f, wish.z} * walk_speed;
             } else {
                 horiz *= std::exp(-12.f * dt); // ground friction
             }
@@ -1231,7 +1257,10 @@ void register_systems(flecs::world& world)
 }
 
 flecs::entity spawn_player_character(
-    flecs::world& world, const glm::vec3& world_or_local_pos, flecs::entity_t ship_or_zero)
+    flecs::world&    world,
+    const glm::vec3& world_or_local_pos,
+    flecs::entity_t  ship_or_zero,
+    const char*      suit_id)
 {
     CharacterController cc{};
     cc.radius     = kDefaultCapsuleRadius;
@@ -1266,11 +1295,31 @@ flecs::entity spawn_player_character(
     spawn_point.ship_or_zero   = ship_or_zero;
     spawn_point.local_position = world_or_local_pos;
 
+    // P3-06: worn suit from the catalog (protection + EVA propellant).
+    const char* resolved_suit =
+        (suit_id != nullptr && suit_id[0] != '\0') ? suit_id : kDefaultPlayerSuitId;
+    const SuitDef* suit_def = find_suit_def(world, resolved_suit);
+    if (suit_def == nullptr && world.try_get<SuitCatalog>() != nullptr) {
+        log::log_warn(
+            log::LogCategory::Config,
+            "player suit '%s' not in catalog — using baseline",
+            resolved_suit);
+    }
+    const Suit suit = suit_from_def(suit_def);
+    log::log_info(
+        log::LogCategory::Game,
+        "Player suit: %s (armour %.0f%%, EVA %.0f, speed x%.2f)",
+        suit.id[0] != '\0' ? suit.id : "(baseline)",
+        static_cast<double>(suit.damage_reduction * 100.f),
+        static_cast<double>(suit.eva_capacity),
+        static_cast<double>(suit.move_speed_mult));
+
     flecs::entity e = world.entity("PlayerCharacter")
                           .set<CharacterController>(cc)
                           .set<Health>(hp)
                           .set<EquippedItem>(gun)
                           .set<Inventory>(inv)
+                          .set<Suit>(suit)
                           .set<SpawnPoint>(spawn_point)
                           .set<ecs::Position>(
                               {spawn_world.x, spawn_world.y, spawn_world.z})

@@ -4,6 +4,7 @@
 #include "engine/log/log.hpp"
 #include "game/ai/ai.hpp"
 #include "game/character/character.hpp"
+#include "game/character/suit_catalog.hpp"
 #include "game/economy/economy.hpp"
 #include "game/flight/ship_catalog.hpp"
 #include "game/flight/weapon_catalog.hpp"
@@ -672,7 +673,11 @@ void apply_damage_events(flecs::world& world)
             if (character::Health* hp = target.try_get_mut<character::Health>()) {
                 // P2-07: zone multiplier (Head/Limb/Torso) — meaningless for
                 // ships, only ever applied here against character::Health.
-                const f32 zoned = remaining * combat::body_zone_damage_multiplier(ev.zone);
+                f32 zoned = remaining * combat::body_zone_damage_multiplier(ev.zone);
+                // P3-06: worn suit absorbs a fraction of what gets through.
+                if (const character::Suit* suit = target.try_get<character::Suit>()) {
+                    zoned *= (1.f - clampf(suit->damage_reduction, 0.f, 0.95f));
+                }
                 hp->hp = std::max(0.f, hp->hp - zoned);
                 if (hp->hp <= 0.f && dead_count < character::kMaxHealthTargets) {
                     newly_dead[dead_count++] = target.id();

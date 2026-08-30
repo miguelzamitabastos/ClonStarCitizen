@@ -1,6 +1,6 @@
 # STATUS
 
-## Fase activa: Fase 3 — Expansión de Contenido — **EN CURSO (6/9)**
+## Fase activa: Fase 3 — Expansión de Contenido — **EN CURSO (7/9)**
 
 Fase 2 validada físicamente por Miguel el 2026-08-30 (probó las 5 escenas de
 `.claude/VERIFICACION-PENDIENTE.md` a mano; solo se ven cuadros porque aún no hay
@@ -18,7 +18,7 @@ es Fase 4). El riesgo explícito de la fase: que se hardcodee contenido en C++ p
 velocidad. Objetivo contrario: añadir una nave / un arma / una misión = editar un
 archivo de datos, nunca tocar el motor.
 
-### Progreso Fase 3 — 6/9
+### Progreso Fase 3 — 7/9
 
 - Pipeline de datos (P3-01, P3-05, P3-08):       [###] 3/3
   - [x] P3-01 Pipeline de datos de nave: stats (masa, empuje, hardpoints, capacidad
@@ -32,10 +32,10 @@ archivo de datos, nunca tocar el motor.
         multipropósito) usando P3-01 (dep. P3-01)
   - [x] P3-03 Hangar y tienda de naves: comprar/vender/cambiar de nave activa,
         reutilizando las transacciones de P1C-03 tal cual (dep. P3-02, P1C-03)
-- Mundo y personaje (P3-04, P3-06):              [#] 1/2
+- Mundo y personaje (P3-04, P3-06):              [##] 2/2
   - [x] P3-04 Expansión de estaciones/ciudades: más NPCs, tiendas y dadores de
         misión por localización (dep. P1D-05, P1C-06)
-  - [ ] P3-06 Personalización básica de personaje: trajes/armadura con stats
+  - [x] P3-06 Personalización básica de personaje: trajes/armadura con stats
         (protección, capacidad EVA) (dep. P1B-01, P3-05)
 - Misiones y verificación (P3-07, P3-09):        [ ] 0/2
   - [ ] P3-07 Más contenido de misiones: plantillas adicionales + una línea
@@ -255,6 +255,45 @@ naves) o se difiere a Fase 6 (pulido).
    pobla 3 localizaciones / 18 NPCs sin crash) + `CSC_SAVE_SMOKE`/`CSC_HANGAR_SMOKE`
    PASS + `validate_catalogs.py` OK + test negativo (`dest` colgante y `market`
    inexistente en `locations.cfg` → 2 `ERROR`, exit 1).
+
+7. **P3-06 trajes/armadura dirigidos por datos:** `assets/data/suits.cfg` (`[[suit]]`)
+   → singleton `character::SuitCatalog` de `SuitDef` POD (`kMaxSuitDefs=16`, sin
+   heap); stats: `damage_reduction` [0,0.95], `eva_capacity`, `eva_drain_per_sec`,
+   `eva_recharge_per_sec`, `move_speed_mult`. Id de texto único; duplicado/ausente
+   = carga `log_error` INVÁLIDA. **Nuevo catálogo, no un refactor** del
+   `kItemCatalog` a pie (que sigue hardcodeado — anotado en la decisión 4).
+   Componente nuevo `character::Suit` (copia del `SuitDef` + `eva_charge` runtime,
+   el único campo mutable). `spawn_player_character` gana `suit_id` opcional
+   (`nullptr` → `suit.flight.standard`, cuyos valores dejan Fase 1B **sin cambio**:
+   0% reducción, EVA generosa, velocidad normal); id desconocido → baseline con
+   warning. Flag `--suit=<id>` (+ `suit_id=` en config) plumbed igual que
+   `--ship=` (P3-02): `AppConfig`/`SceneContext.player_suit_id` → las 5 escenas a
+   pie de `scene.cpp`. `economy_test` no lo cablea (su `spawn_player_character`
+   está en `economy.cpp`, sin ctx — mismo criterio que `--ship=`).
+   **Ganchos:** (1) protección — `flight::apply_damage_events` multiplica el daño
+   ya zonificado (P2-07) por `(1 - clamp(suit.damage_reduction, 0, 0.95))` cuando
+   el objetivo lleva `Suit`; (2) EVA — la locomoción de `character::fixed_step`
+   drena `eva_charge` (`eva_drain_per_sec`) mientras se empuja en EVA y **corta el
+   empuje a 0 de carga**, recarga (`eva_recharge_per_sec`) con gravedad/suelo;
+   (3) velocidad — el andar usa `cc.move_speed * suit.move_speed_mult`. NPCs sin
+   `Suit` → ilimitado / normal, como antes.
+   **Locker en juego:** componente `character::SuitLocker{suit_id}` + dispatch en
+   `handle_interact_events` (antes del kiosco de nave); `spawn_suit_locker`.
+   `ship_hangar_test` gana 4 lockers (Explorer/Heavy/Scout/Standard) detrás del
+   jugador — gratis, es tu taquilla, no una tienda. Gate `CSC_SUIT_SMOKE=1`
+   (patrón `CSC_HANGAR_SMOKE`): equipa cada traje del catálogo y comprueba que el
+   `Suit` vivo coincide con el `SuitDef` (carga EVA llena), y que un id
+   inexistente se rechaza sin tocar el traje.
+   4 trajes: `suit.flight.standard` (baseline), `suit.eva.explorer` (10% red.,
+   EVA 240, más lento), `suit.armor.heavy` (45% red., EVA 55, x0.8),
+   `suit.light.scout` (0% red., x1.2). `validate_catalogs.py` (P3-08) gana los
+   chequeos de `suits.cfg` (id único, rangos, presencia del traje por defecto).
+   **Fuera de alcance, anotado:** `Suit` no se serializa en el save v1 (misma
+   deuda de schema que `ShipSpec`/`ShipOwnership`); no hay HUD de armadura/EVA aún
+   (visible por efecto y por el log `Player suit: ...` / `Locker: equipped ...`).
+   Verificado: build limpio (0 warnings) + 10 escenas headless + `CSC_SUIT_SMOKE`/
+   `CSC_HANGAR_SMOKE`/`CSC_SAVE_SMOKE` PASS + `validate_catalogs.py` OK +
+   `--suit=` aplica (log `armour 45%`).
 
 ## Fase 2 — Profundidad de Sistemas — **COMPLETADA y validada** (13/13, validación física 2026-08-30)
 
@@ -512,7 +551,7 @@ demo (`flight_test`, `on_foot_test`, `economy_test`, `universe_test`, `ui_audio_
 | `universe_test` | P1D OK — Estacion-Alfa → espacio (rebase ≥1) → Planeta-01-LZ |
 | `ui_audio_test` | P1E OK — HUD Both, Esc pause, 3 positional sine tones (synthetic PCM) |
 | `save_load_test` | P1F OK — F5/F9 + pause Save/Load; CSC_SAVE_SMOKE |
-| `ship_hangar_test` | P3-03 — kioscos comprar/cambiar/vender nave + asiento piloto; CSC_HANGAR_SMOKE |
+| `ship_hangar_test` | P3-03/P3-06 — kioscos de nave + taquillas de traje + asiento piloto; CSC_HANGAR_SMOKE / CSC_SUIT_SMOKE |
 
 ## Decisiones P1F (documentadas)
 1. **Formato (P1F-01):** binario versionado poco-endian con cabecera
@@ -569,6 +608,23 @@ Cuando una entidad lleva `LocalToShip { ship_entity, local_position, local_orien
 5. Al salir (quitar `LocalToShip`), se bakea la pose mundial y la sim pasa a espacio mundo / GravityZone.
 
 ## Bitácora (más reciente arriba, una línea por tarea)
+- 2026-08-30 [P3-06] Trajes/armadura por datos: `assets/data/suits.cfg` (`[[suit]]`)
+  → `character::SuitCatalog`/`SuitDef` (POD, `kMaxSuitDefs=16`); componente nuevo
+  `character::Suit`. `spawn_player_character` gana `suit_id` opcional; flag
+  `--suit=<id>` plumbed como `--ship=`. Ganchos: protección en
+  `apply_damage_events` (`daño *= 1 - damage_reduction`), propelente EVA
+  drena/recarga en la locomoción y corta el empuje a 0, `move_speed_mult` en el
+  andar. Locker en juego: `SuitLocker` + dispatch + `spawn_suit_locker`; 4
+  taquillas en `ship_hangar_test`. Gate `CSC_SUIT_SMOKE=1` PASS. 4 trajes
+  (standard baseline / explorer / heavy 45% / scout x1.2). `validate_catalogs.py`
+  gana chequeos de `suits.cfg`. `Suit` no se serializa aún (deuda de schema). El
+  `kItemCatalog` a pie sigue hardcodeado (catálogo aparte, no refactor).
+  Verificado: build 0 warnings + 10 escenas headless + `CSC_SUIT_SMOKE`/
+  `CSC_HANGAR_SMOKE`/`CSC_SAVE_SMOKE` PASS + validador OK. **Verificación manual
+  pendiente de Miguel:** con `--suit=suit.armor.heavy` en `npc_combat_test`
+  aguantar más disparos; con `suit.eva.explorer` vs `suit.armor.heavy` en
+  `on_foot_test` notar la diferencia de propelente EVA; taquillas de
+  `ship_hangar_test`.
 - 2026-08-30 [P3-04] Población de localizaciones por datos: `assets/data/locations.cfg`
   (`[[location]]` + `npc.N.*`) → `economy::LocationCatalog`; la escena coloca cada
   localización (tabla `LocationPlacement`), el `.cfg` la puebla.

@@ -132,6 +132,10 @@ bool apply_kv(AppConfig& out, const char* key, const char* value)
         copy_fixed(out.player_ship_id, sizeof(out.player_ship_id), value);
         return true;
     }
+    if (std::strcmp(key, "player_suit_id") == 0 || std::strcmp(key, "suit_id") == 0) {
+        copy_fixed(out.player_suit_id, sizeof(out.player_suit_id), value);
+        return true;
+    }
     if (std::strcmp(key, "log_level") == 0) {
         log::LogLevel level = out.log_level;
         if (parse_log_level(value, level)) {
@@ -230,6 +234,7 @@ void config_apply_argv(AppConfig& out, int argc, char** argv)
 
         static constexpr const char kScenePrefix[] = "--scene=";
         static constexpr const char kShipPrefix[] = "--ship=";
+        static constexpr const char kSuitPrefix[] = "--suit=";
         static constexpr const char kConfigPrefix[] = "--config=";
         static constexpr const char kLogPrefix[] = "--log-level=";
 
@@ -247,6 +252,14 @@ void config_apply_argv(AppConfig& out, int argc, char** argv)
         }
         if (std::strcmp(arg, "--ship") == 0 && i + 1 < argc && argv[i + 1] != nullptr) {
             apply_kv(out, "player_ship_id", argv[++i]);
+            continue;
+        }
+        if (std::strncmp(arg, kSuitPrefix, sizeof(kSuitPrefix) - 1) == 0) {
+            apply_kv(out, "player_suit_id", arg + (sizeof(kSuitPrefix) - 1));
+            continue;
+        }
+        if (std::strcmp(arg, "--suit") == 0 && i + 1 < argc && argv[i + 1] != nullptr) {
+            apply_kv(out, "player_suit_id", argv[++i]);
             continue;
         }
         if (std::strncmp(arg, kConfigPrefix, sizeof(kConfigPrefix) - 1) == 0) {

@@ -4,6 +4,7 @@
 #include "game/ai/ai.hpp"
 #include "game/audio/audio.hpp"
 #include "game/character/character.hpp"
+#include "game/character/suit_catalog.hpp"
 #include "game/economy/economy.hpp"
 #include "game/economy/location_catalog.hpp"
 #include "game/flight/flight.hpp"
@@ -106,7 +107,7 @@ bool setup_on_foot_test(SceneContext& ctx)
 
     // Player starts inside the ship (authoritative LocalToShip).
     (void)game::character::spawn_player_character(
-        *ctx.world, glm::vec3{0.f, 0.9f, 0.f}, ship.id());
+        *ctx.world, glm::vec3{0.f, 0.9f, 0.f}, ship.id(), ctx.player_suit_id);
 
     (void)game::character::spawn_ship_hatch(
         *ctx.world, ship.id(), glm::vec3{0.f, 0.9f, 3.2f}, "Exit / Enter hatch");
@@ -307,7 +308,7 @@ bool setup_npc_combat_test(SceneContext& ctx)
 
     // Player on foot, world space, looking down -Z at the pirates.
     (void)game::character::spawn_player_character(
-        *ctx.world, glm::vec3{0.f, 0.9f, 8.f}, 0);
+        *ctx.world, glm::vec3{0.f, 0.9f, 8.f}, 0, ctx.player_suit_id);
 
     // P2-06: two pirate grunts patrolling ahead + cover crates between them.
     {
@@ -432,7 +433,7 @@ bool setup_ui_audio_test(SceneContext& ctx)
     }
 
     (void)game::character::spawn_player_character(
-        *ctx.world, glm::vec3{2.f, 1.f, 4.f}, 0);
+        *ctx.world, glm::vec3{2.f, 1.f, 4.f}, 0, ctx.player_suit_id);
 
     // Three simultaneous looping positional tones at different ranges (P1E-07).
     auto spawn_emitter = [&](const char* name, const glm::vec3& p, game::audio::SoundId snd,
@@ -546,7 +547,7 @@ bool setup_save_load_test(SceneContext& ctx)
 
     // Character in EVA near the ship (world space — proves Health restore).
     (void)game::character::spawn_player_character(
-        *ctx.world, glm::vec3{14.f, 7.5f, -28.f}, 0);
+        *ctx.world, glm::vec3{14.f, 7.5f, -28.f}, 0, ctx.player_suit_id);
 
     ctx.world->set<ecs::ControlMode>({ecs::ControlModeKind::ShipPilot});
 
@@ -606,7 +607,7 @@ bool setup_ship_hangar_test(SceneContext& ctx)
             .add<ecs::InstanceTag>();
     }
     (void)game::character::spawn_player_character(
-        *ctx.world, glm::vec3{0.f, 0.9f, 5.f}, 0);
+        *ctx.world, glm::vec3{0.f, 0.9f, 5.f}, 0, ctx.player_suit_id);
 
     // Board + fly the (reconfigured) ship to feel the difference.
     (void)game::character::spawn_ship_hatch(
@@ -624,21 +625,35 @@ bool setup_ship_hangar_test(SceneContext& ctx)
     (void)game::flight::spawn_ship_dealer(
         *ctx.world, glm::vec3{4.5f, 1.2f, 2.f}, "ship.heavy.bulwark", 120000);
 
+    // P3-06: suit lockers behind the player — F equips that suit (free).
+    (void)game::character::spawn_suit_locker(
+        *ctx.world, glm::vec3{-3.f, 1.2f, 8.f}, "suit.eva.explorer");
+    (void)game::character::spawn_suit_locker(
+        *ctx.world, glm::vec3{0.f, 1.2f, 8.f}, "suit.armor.heavy");
+    (void)game::character::spawn_suit_locker(
+        *ctx.world, glm::vec3{3.f, 1.2f, 8.f}, "suit.light.scout");
+    (void)game::character::spawn_suit_locker(
+        *ctx.world, glm::vec3{6.f, 1.2f, 8.f}, "suit.flight.standard");
+
     ctx.world->set<ecs::ControlMode>({ecs::ControlModeKind::OnFoot});
 
     if (const char* smoke = std::getenv("CSC_HANGAR_SMOKE");
         smoke != nullptr && smoke[0] == '1') {
         (void)game::flight::hangar_smoke_test(*ctx.world);
     }
+    if (const char* smoke = std::getenv("CSC_SUIT_SMOKE");
+        smoke != nullptr && smoke[0] == '1') {
+        (void)game::character::suit_smoke_test(*ctx.world);
+    }
 
     ctx.needs_shared_mesh = true;
-    // ship + player + deck + hatch + seat + 4 kiosks + projectiles.
-    ctx.instance_count = 12u + static_cast<u32>(game::flight::kProjectilePoolSize);
+    // ship + player + deck + hatch + seat + 4 ship kiosks + 4 suit lockers + projectiles.
+    ctx.instance_count = 16u + static_cast<u32>(game::flight::kProjectilePoolSize);
 
     log::log_info(
         log::LogCategory::Game,
-        "ship_hangar_test: F on a kiosk to buy/switch/sell; F on the seat to fly "
-        "(200000 cr to spend)");
+        "ship_hangar_test: F on a kiosk to buy/switch/sell ships; F on a locker "
+        "to change suit; F on the seat to fly (200000 cr to spend)");
     return true;
 }
 
@@ -753,6 +768,7 @@ bool scene_setup_by_name(const char* name, SceneContext& ctx)
         (void)game::flight::load_ship_catalog(*ctx.world);      // P3-01
         (void)game::flight::validate_ship_weapon_refs(*ctx.world);
         (void)game::economy::load_location_catalog(*ctx.world); // P3-04
+        (void)game::character::load_suit_catalog(*ctx.world);   // P3-06
     }
 
     return desc->setup(ctx);

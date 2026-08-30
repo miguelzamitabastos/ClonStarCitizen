@@ -22,6 +22,9 @@ struct SceneContext {
     /// P3-02: ship catalog id for the player ship in flight-capable scenes
     /// (from `--ship=` / config). nullptr / empty = the scene's own default.
     const char*     player_ship_id = nullptr;
+    /// P3-06: suit catalog id for the player character in on-foot scenes
+    /// (from `--suit=` / config). nullptr / empty = the scene's own default.
+    const char*     player_suit_id = nullptr;
 };
 
 using SceneSetupFn = bool (*)(SceneContext& ctx);

@@ -275,8 +275,13 @@ void register_systems(flecs::world& world);
 /// Fixed-timestep: gravity sample, locomotion, interact, FPS fire, LocalToShip sync.
 void fixed_step(flecs::world& world, f32 dt);
 
+/// P3-06: `suit_id` names a SuitDef in the suit catalog (nullptr →
+/// kDefaultPlayerSuitId). Unknown id / missing catalog → baseline suit.
 [[nodiscard]] flecs::entity spawn_player_character(
-    flecs::world& world, const glm::vec3& world_or_local_pos, flecs::entity_t ship_or_zero);
+    flecs::world&   world,
+    const glm::vec3& world_or_local_pos,
+    flecs::entity_t  ship_or_zero,
+    const char*      suit_id = nullptr);
 
 [[nodiscard]] flecs::entity spawn_health_target(
     flecs::world& world, const glm::vec3& position, f32 scale = 1.5f);

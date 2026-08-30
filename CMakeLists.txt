@@ -157,6 +157,7 @@ set(ENGINE_SOURCES
     src/game/flight/ship_catalog.cpp
     src/game/flight/weapon_catalog.cpp
     src/game/character/character.cpp
+    src/game/character/suit_catalog.cpp
     src/game/ai/ai.cpp
     src/game/tick.cpp
     src/game/economy/economy.cpp

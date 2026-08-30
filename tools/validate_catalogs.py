@@ -36,6 +36,8 @@ NUM_FACTIONS = 4
 MAX_LOCATION_DEFS = 12
 MAX_LOCATION_NPCS = 16
 LOCATION_NPC_KINDS = {"trader", "mission_giver", "turn_in", "travel_pad"}
+MAX_SUIT_DEFS = 16
+DEFAULT_PLAYER_SUIT_ID = "suit.flight.standard"
 
 DEFAULT_SHIP_WEAPON_ID = "weapon.fixed.repeater"
 DEFAULT_TURRET_WEAPON_ID = "weapon.turret.repeater"
@@ -358,6 +360,28 @@ def validate_locations(path: Path, markets, commodities, missions, report: Repor
     return locs
 
 
+def validate_suits(path: Path, report: Report) -> dict[str, Entry]:
+    entries = parse_cfg(path, report)
+    suits = check_unique_ids(entries, "suit", path.name, report, cap=MAX_SUIT_DEFS)
+    for sid, e in suits.items():
+        where = f"{path.name}:{e.line}"
+        if not sid.startswith("suit."):
+            report.warn(where, f"id {sid!r} does not follow 'suit.<class>.<name>'")
+        dr = as_float(e, "damage_reduction", where, report)
+        if dr is not None and not 0.0 <= dr <= 0.95:
+            report.error(where, f"damage_reduction={dr} out of [0, 0.95]")
+        for k in ("eva_capacity", "eva_drain_per_sec", "eva_recharge_per_sec"):
+            v = as_float(e, k, where, report)
+            if v is not None and v < 0.0:
+                report.error(where, f"{k}={v} must be >= 0")
+        msm = as_float(e, "move_speed_mult", where, report)
+        if msm is not None and msm <= 0.0:
+            report.error(where, f"move_speed_mult={msm} must be > 0")
+    if DEFAULT_PLAYER_SUIT_ID not in suits:
+        report.error(path.name, f"missing engine default suit {DEFAULT_PLAYER_SUIT_ID!r}")
+    return suits
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -381,6 +405,7 @@ def main() -> int:
                                  commodities, markets, report)
     locations = validate_locations(data_dir / "locations.cfg",
                                    markets, commodities, missions, report)
+    suits = validate_suits(data_dir / "suits.cfg", report)
 
     if not args.quiet:
         print(f"catalogs in {data_dir}:")
@@ -390,6 +415,7 @@ def main() -> int:
         print(f"  markets ...... {len(markets):3d}")
         print(f"  missions ..... {len(missions):3d}")
         print(f"  locations .... {len(locations):3d}")
+        print(f"  suits ........ {len(suits):3d}")
         for w in report.warnings:
             print(f"WARN  {w}")
 

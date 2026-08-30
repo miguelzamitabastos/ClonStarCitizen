@@ -24,6 +24,10 @@ struct AppConfig {
     /// scenes (`--ship=<id>` / `ship_id=` in a config file). Empty = the scene's
     /// own default (ship.player.default). The hangar (P3-03) supersedes this.
     char player_ship_id[kConfigStringBytes]{};
+    /// P3-06: suit catalog id the player spawns with in on-foot demo scenes
+    /// (`--suit=<id>` / `suit_id=`). Empty = suit.flight.standard. A suit locker
+    /// (P3-06) supersedes this in-scene.
+    char player_suit_id[kConfigStringBytes]{};
     log::LogLevel log_level = log::LogLevel::Info;
     /// Undecorated window at primary monitor resolution — avoids WSLg/WM
     /// decoration quirks with a bordered resizable window.
