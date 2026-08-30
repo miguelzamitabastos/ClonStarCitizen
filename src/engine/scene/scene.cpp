@@ -13,6 +13,7 @@
 #include "game/flight/weapon_catalog.hpp"
 #include "game/save/save.hpp"
 #include "game/ui/ui.hpp"
+#include "game/world/galaxy.hpp"
 #include "game/world/planet_terrain.hpp"
 #include "game/world/star_system_gen.hpp"
 #include "game/world/terrain_stream.hpp"
@@ -387,6 +388,25 @@ bool setup_universe_test(SceneContext& ctx)
     if (std::getenv("CSC_FIXEDSYS_SMOKE") != nullptr) {
         (void)game::world::fixed_system_smoke_test("assets/data/star_system.cfg");  // P4-04
     }
+    if (std::getenv("CSC_GALAXY_SMOKE") != nullptr) {
+        (void)game::world::galaxy_smoke_test();  // P4-05
+    }
+
+    // P4-05: the galaxy this system belongs to (node 0 = the composed home
+    // system from P4-04). `--system=<n>` picks another node as a load transition.
+    game::world::GalaxyMap galaxy{};
+    game::world::generate_galaxy(
+        game::world::kDefaultGalaxySeed, game::world::kHomeSystemSeed, galaxy);
+    u32 node = 0;
+    if (ctx.galaxy_system != nullptr) {
+        node = static_cast<u32>(std::strtoul(ctx.galaxy_system, nullptr, 0));
+        if (node >= galaxy.count) {
+            node = 0;
+        }
+    }
+    galaxy.current = node;
+    game::world::galaxy_log(galaxy);
+    ctx.world->set<game::world::GalaxyMap>(galaxy);
 
     game::world::StarSystemData system{};
     if (ctx.world_seed != nullptr) {
@@ -399,8 +419,14 @@ bool setup_universe_test(SceneContext& ctx)
             system.system_name,
             static_cast<unsigned long long>(seed),
             n);
-    } else {
+    } else if (node == 0) {
         (void)game::world::load_star_system_config(system, "assets/data/star_system.cfg");
+    } else {
+        const csc::u32 n = game::world::generate_star_system(galaxy.systems[node].seed, system);
+        log::log_info(
+            log::LogCategory::Core,
+            "universe_test: jumped to galaxy node %u '%s' (%u bodies)",
+            node, system.system_name, n);
     }
 
     (void)game::world::spawn_universe_test(*ctx.world, system, ctx.player_ship_id);

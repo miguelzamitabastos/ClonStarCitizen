@@ -167,6 +167,7 @@ set(ENGINE_SOURCES
     src/game/world/star_system_gen.cpp
     src/game/world/planet_terrain.cpp
     src/game/world/terrain_stream.cpp
+    src/game/world/galaxy.cpp
     src/game/ui/ui.cpp
     src/game/audio/audio.cpp
     src/game/save/save.cpp

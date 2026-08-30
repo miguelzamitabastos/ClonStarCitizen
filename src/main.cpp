@@ -153,6 +153,8 @@ int main(int argc, char** argv)
         (app_config.player_suit_id[0] != '\0') ? app_config.player_suit_id : nullptr;
     scene_ctx.world_seed =
         (app_config.world_seed[0] != '\0') ? app_config.world_seed : nullptr;
+    scene_ctx.galaxy_system =
+        (app_config.galaxy_system[0] != '\0') ? app_config.galaxy_system : nullptr;
     if (!scene::scene_setup_by_name(app_config.scene_name, scene_ctx)) {
         log::log_error(log::LogCategory::Core, "Scene setup failed.");
         input::input_shutdown(input_sys);

@@ -28,6 +28,9 @@ struct SceneContext {
     /// P4-01: star-system seed for procedural scenes (from `--seed=` / config).
     /// nullptr / empty = use the fixed star_system.cfg.
     const char*     world_seed = nullptr;
+    /// P4-05: galaxy node index for universe_test (from `--system=` / config).
+    /// nullptr / empty = node 0 (home). Ignored when world_seed is set.
+    const char*     galaxy_system = nullptr;
 };
 
 using SceneSetupFn = bool (*)(SceneContext& ctx);

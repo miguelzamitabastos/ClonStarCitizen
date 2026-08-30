@@ -1,6 +1,6 @@
 # STATUS
 
-## Fase activa: Fase 4 — Universo Procedural — **EN CURSO (4/8)**
+## Fase activa: Fase 4 — Universo Procedural — **EN CURSO (5/8)**
 
 Fase 3 validada físicamente por Miguel el 2026-08-30 (probó las 6 secciones de
 `.claude/VERIFICACION-PENDIENTE.md` a mano: `content_smoke_test`, naves/armas por
@@ -19,7 +19,7 @@ suficiente contenido curado insertado sobre lo procedural para que no se sienta
 vacío. El sistema fijo de Fase 1 pasa a ser un caso particular (semilla fija) del
 generador, no se descarta. Es la fase técnicamente más exigente después de Fase 0.
 
-### Progreso Fase 4 — 4/8
+### Progreso Fase 4 — 5/8
 
 - [x] P4-01 Algoritmo de generación de sistema estelar (semilla → estrella,
       planetas, órbitas) (dep. P1D-02)
@@ -30,7 +30,7 @@ generador, no se descarta. Es la fase técnicamente más exigente después de Fa
       chunks en pantalla es el trabajo de renderer de P4-08
 - [x] P4-04 Migración del sistema fijo actual a semilla fija del generador (no
       perder contenido) (dep. P4-01)
-- [ ] P4-05 Navegación entre sistemas (jump points o equivalente) + mapa de
+- [x] P4-05 Navegación entre sistemas (jump points o equivalente) + mapa de
       galaxia simplificado (dep. P4-01)
 - [ ] P4-06 Distribución procedural de recursos minables (asteroides/superficie)
       (dep. P4-02)
@@ -220,6 +220,36 @@ junte todo esto. Bug latente conocido de baja probabilidad: cargar en la ventana
    cargas son byte-idénticas.
    Verificado: build limpio (0 warnings) + `CSC_FIXEDSYS_SMOKE: PASS` + 9 escenas
    headless + `CSC_SAVE_SMOKE`/`CSC_FORCE_REBASE_SMOKE` OK.
+
+5. **P4-05 navegación entre sistemas + mapa de galaxia:** módulo nuevo
+   `game/world/galaxy.{hpp,cpp}` — modelo puro y determinista.
+   `generate_galaxy(galaxy_seed, home_system_seed, GalaxyMap&)`: 5–9 sistemas
+   dispersos en un disco (`Rng64`), **nodo 0 = el sistema home** (su `seed` es
+   `kHomeSystemSeed=20260830`, el mismo `base_seed` de `star_system.cfg` de P4-04
+   → el sistema fijo ES el nodo 0). Cada sistema enlaza con sus **2 vecinos más
+   cercanos** (enlaces simétricos), y una pasada BFS+enlace-al-más-cercano
+   **garantiza que el grafo es conexo**. `galaxy_jump(g, target)` valida
+   adyacencia antes de mover `g.current` (salto = una transición de carga, como
+   permite el roadmap — no simulación de viaje). `galaxy_current_seed`,
+   `galaxy_log` (vuelca el grafo — el "mapa simplificado" de esta fase; una vista
+   de mapa real es pulido de Fase 6).
+   Integración: `setup_universe_test` construye la galaxia, elige el nodo con
+   `--system=<n>` (flag nuevo + `system=` en config; por defecto 0), guarda
+   `GalaxyMap` como singleton y loguea el grafo. Nodo 0 → carga el sistema
+   compuesto de P4-04; nodo >0 → `generate_star_system(nodo.seed)` puro.
+   `--seed=<n>` (P4-01) sigue mandando por encima. Gate headless
+   `CSC_GALAXY_SMOKE=1`: determinismo (`memcmp`), enlaces simétricos, grafo
+   conexo (BFS), nodo 0 = home, y `galaxy_jump` acepta adyacentes / rechaza el
+   resto + ida y vuelta.
+   **Fuera de alcance, anotado:** el salto **en marcha** (volar a un jump point,
+   pulsar F, cambiar de sistema sin reiniciar) lo ensambla P4-08 — reconstruir
+   todos los cuerpos + nave + floating origin en vivo es su trabajo; aquí el
+   salto es `--system=<n>` al arrancar. El nombre del nodo 0 en el `galaxy_log`
+   es el derivado de la semilla (`Sys-XXXX`); el sistema cargado conserva su
+   nombre curado ("Sistema-01").
+   Verificado: build limpio (0 warnings) + `CSC_GALAXY_SMOKE: PASS` + 11 escenas
+   headless + los 8 gates de smoke previos PASS + `validate_catalogs.py` OK +
+   `--system=2` carga el nodo 2 generado.
 
 ---
 
@@ -882,6 +912,18 @@ Cuando una entidad lleva `LocalToShip { ship_entity, local_position, local_orien
 5. Al salir (quitar `LocalToShip`), se bakea la pose mundial y la sim pasa a espacio mundo / GravityZone.
 
 ## Bitácora (más reciente arriba, una línea por tarea)
+- 2026-08-30 [P4-05] Navegación entre sistemas + mapa de galaxia:
+  `game/world/galaxy.{hpp,cpp}` — `generate_galaxy(galaxy_seed, home_seed, out)`
+  puro: 5-9 sistemas en un disco, nodo 0 = home (seed = `base_seed` de P4-04),
+  cada uno enlaza con 2 vecinos (simétrico), BFS garantiza grafo conexo.
+  `galaxy_jump` valida adyacencia (salto = transición de carga). `galaxy_log`
+  vuelca el grafo. `setup_universe_test` construye la galaxia, `--system=<n>`
+  elige nodo (0 = sistema compuesto P4-04, >0 = generado puro), guarda
+  `GalaxyMap` singleton. Gate `CSC_GALAXY_SMOKE=1` PASS (determinismo, simetría,
+  conexo, nodo 0 = home, reglas de salto). Salto en marcha (jump point in-run) →
+  P4-08. Verificado: build 0 warnings + GALAXY_SMOKE PASS + 11 escenas + 8 smokes
+  previos PASS + `--system=2` OK. **Sin verificación manual** (headless; el viaje
+  entre sistemas se ve con P4-08).
 - 2026-08-30 [P4-04] Sistema fijo → semilla + overlay curado: `star_system.cfg`
   gana `base_seed=20260830`; `load_star_system_config` genera la base procedural
   (P4-01) y superpone los `body.N.*` (reemplaza por nombre, o añade; un `Star`
