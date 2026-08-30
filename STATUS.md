@@ -1,6 +1,17 @@
 # STATUS
 
-## Fase activa: Fase 4 — Universo Procedural — **EN CURSO (7/8)**
+## Fase activa: Fase 4 — Universo Procedural — **7/8 IMPLEMENTADA, PARADA en P4-08**
+
+P4-01..07 están implementadas y verificadas headless (build limpio + 11 gates de
+smoke propios + 11 escenas sin error). **P4-08 (`procedural_test`) es la parada:**
+necesita (a) una vía de render multi-malla en el renderer de Vulkan para dibujar
+los chunks de terreno de P4-03 — hoy el renderer solo dibuja UNA malla
+compartida instanciada, así que esto es trabajo de `vulkan-pipeline-expert` — y
+(b) la **RTX 5060 Ti de Miguel** para validar el DoD real de la fase (framerate
+objetivo sin pausas al moverse rápido sobre la superficie; lavapipe por software
+no puede medir eso). Es el criterio de salida "solo Miguel puede validar" de
+Fase 4, igual que cerraron Fases 0/1/2/3. Plan de P4-08 en el mensaje de cierre
+de la sesión / `.claude/VERIFICACION-PENDIENTE.md`.
 
 Fase 3 validada físicamente por Miguel el 2026-08-30 (probó las 6 secciones de
 `.claude/VERIFICACION-PENDIENTE.md` a mano: `content_smoke_test`, naves/armas por
@@ -37,7 +48,9 @@ generador, no se descarta. Es la fase técnicamente más exigente después de Fa
 - [x] P4-07 Inserción de puntos de interés curados sobre el terreno procedural
       (estaciones, POIs a mano) (dep. P4-02, P3-04)
 - [ ] P4-08 Escena demo `procedural_test`: viaje entre dos sistemas generados +
-      aterrizaje en terreno real (dep. P4-01..07)
+      aterrizaje en terreno real (dep. P4-01..07) — **PARADA**: render multi-malla
+      de terreno en Vulkan (`vulkan-pipeline-expert`) + validación en la RTX de
+      Miguel (DoD de framerate). Ver plan abajo.
 
 ### Restricciones de arquitectura de Fase 4 (del roadmap, vinculantes)
 
@@ -71,6 +84,44 @@ generador, no se descarta. Es la fase técnicamente más exigente después de Fa
   chunks generados o inspección visual reproducible).
 - El streaming de terreno mantiene el framerate objetivo de Fase 0 sin pausas
   perceptibles al moverse rápido sobre la superficie (overlay de P0-11).
+
+### Plan de P4-08 (`procedural_test`) — pendiente
+
+Todo lo que consume P4-08 ya existe y está probado headless (P4-01..07). Lo que
+falta es el **render del terreno** y el **ensamblaje de la escena**, más la
+validación en hardware real. Pasos:
+
+1. **Renderer Vulkan — dibujar N mallas de terreno** (`vulkan-pipeline-expert`).
+   Hoy `renderer_upload_mesh` sube UNA malla (`demo_mesh`) dibujada instanciada.
+   Añadir a `RendererState` un array fijo `GpuMesh terrain_chunks[kMaxLoadedChunks]`
+   + `renderer_upload_terrain_chunk(state, device, slot, MeshCpu)` /
+   `renderer_retire_terrain_chunk(state, device, slot)` (retirada diferida N
+   frames por los frames-in-flight), y en `renderer_draw_frame`, tras la grid,
+   bind `mesh_pipeline` + un buffer de instancia de 1 matriz identidad y
+   `vkCmdDrawIndexed` por chunk `GpuReady`. Reutilizar el código de creación de
+   VB/IB de `renderer_upload_mesh` factorizado.
+2. **Cablear P4-03 al renderer.** El `TerrainStreamer` ya tiene `upload_cb`/
+   `retire_cb`/`cb_ctx`: la escena pasa un contexto {renderer, device} y
+   callbacks que llaman a las funciones del paso 1, guardando el slot en
+   `TerrainChunk.gpu_handle`.
+3. **Escena `procedural_test`** (nueva en `scene.cpp`): galaxia (P4-05) con nodo
+   0 = home compuesto y al menos otro nodo generado; carga el sistema del nodo
+   actual (P4-01/04) con su cinturón de asteroides (P4-06) y POIs (P4-07); por
+   cada planeta cercano, un `TerrainStreamer` (P4-02/03) con
+   `params = planet_terrain_params(body_seed, radius, has_atmo)`;
+   `world::fixed_step`/un sistema nuevo llama a `terrain_streamer_update` con la
+   posición del jugador. Un `JumpPoint` interactuable por enlace de galaxia que,
+   al pulsar F, hace `galaxy_jump` + reconstruye el sistema en sitio (despawn de
+   los `SystemBody` + respawn) — el salto en marcha diferido de P4-05.
+4. **Revisar el umbral de floating-origin** (`kFloatingOriginThreshold=2000`) a
+   escala planetaria/interplanetaria reales (item del roadmap): con el terreno
+   renderizando y volando sobre la superficie, comprobar si 2 km sigue siendo
+   razonable; si no, ajustarlo y documentar el cambio.
+5. **Verificación de Miguel (RTX 5060 Ti):** `--scene=procedural_test`; volar de
+   un sistema a otro por un jump point; aterrizar en un planeta con terreno;
+   comprobar con el overlay F1 (P0-11) que el framerate se mantiene sin pausas al
+   moverse rápido sobre la superficie; y que relanzar con la misma semilla da el
+   mismo sistema/terreno.
 
 ### Deuda de schema del save arrastrada a Fase 4 (decidir al empezar el generador)
 
@@ -965,6 +1016,13 @@ Cuando una entidad lleva `LocalToShip { ship_entity, local_position, local_orien
 5. Al salir (quitar `LocalToShip`), se bakea la pose mundial y la sim pasa a espacio mundo / GravityZone.
 
 ## Bitácora (más reciente arriba, una línea por tarea)
+- 2026-08-30 [Fase 4 7/8 — PARADA P4-08] P4-01..07 implementadas y verificadas
+  headless (11 gates de smoke propios + 11 escenas). **P4-08 (`procedural_test`)
+  queda parado:** necesita render multi-malla de terreno en Vulkan
+  (`vulkan-pipeline-expert` — hoy el renderer solo dibuja una malla compartida
+  instanciada) + validación del DoD de framerate en la RTX de Miguel. Plan de 5
+  pasos en la sección "Plan de P4-08" de arriba. Push de los commits P4-03..07 a
+  `origin/main`.
 - 2026-08-30 [P4-07] POIs curados sobre el universo procedural:
   `game/world/poi_catalog.{hpp,cpp}` + `assets/data/pois.cfg` (`[[poi]]`) →
   `PoiCatalog`. Colocación por `orbit` / `planet_surface` (lat/lon sobre la
