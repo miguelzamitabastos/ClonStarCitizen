@@ -127,8 +127,12 @@ void star_system_set_placeholders(StarSystemData& out);
 /// Returns player ship entity. Sets FloatingOrigin singleton + ControlMode ShipPilot.
 /// P3-02: `player_ship_id` (nullptr = ship.player.default) picks the ShipDef the
 /// player spawns with — plumbed from `--ship=` via SceneContext.
+/// P4-06: `system_seed` (0 = none) seeds the asteroid field for this system.
 [[nodiscard]] flecs::entity spawn_universe_test(
-    flecs::world& world, const StarSystemData& data, const char* player_ship_id = nullptr);
+    flecs::world&         world,
+    const StarSystemData& data,
+    const char*           player_ship_id = nullptr,
+    u64                   system_seed    = 0);
 
 /// Copy rebase_count from FloatingOrigin (0 if absent).
 void fill_world_telemetry(flecs::world& world, u32& rebase_count, bool& found);

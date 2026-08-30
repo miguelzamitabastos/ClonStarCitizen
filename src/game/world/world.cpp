@@ -5,6 +5,7 @@
 #include "game/ai/ai.hpp"
 #include "game/character/character.hpp"
 #include "game/flight/flight.hpp"
+#include "game/world/resources.hpp"
 #include "game/world/star_system_gen.hpp"
 
 #include <algorithm>
@@ -424,10 +425,11 @@ void rebase_if_needed(flecs::world& world)
         static_cast<double>(fo->origin_offset.z));
 }
 
-void fixed_step(flecs::world& world, f32 /*dt*/)
+void fixed_step(flecs::world& world, f32 dt)
 {
     rebase_if_needed(world);
     update_stream_triggers(world);
+    update_mining(world, dt);  // P4-06
 }
 
 void star_system_set_placeholders(StarSystemData& out)
@@ -697,7 +699,7 @@ bool fixed_system_smoke_test(const char* path)
 }
 
 flecs::entity spawn_universe_test(
-    flecs::world& world, const StarSystemData& data, const char* player_ship_id)
+    flecs::world& world, const StarSystemData& data, const char* player_ship_id, u64 system_seed)
 {
     FloatingOrigin fo{};
     fo.threshold    = kFloatingOriginThreshold;
@@ -772,6 +774,11 @@ flecs::entity spawn_universe_test(
         lz_count,
         planet_count,
         star_count);
+
+    // P4-06: procedurally-placed minable asteroids for this system.
+    if (system_seed != 0) {
+        spawn_asteroid_field(world, system_seed);
+    }
 
     // Player ship near station, facing -Z toward landing zone (open-space stretch).
     flight::spawn_projectile_pool(world);

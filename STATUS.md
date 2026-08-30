@@ -1,6 +1,6 @@
 # STATUS
 
-## Fase activa: Fase 4 — Universo Procedural — **EN CURSO (5/8)**
+## Fase activa: Fase 4 — Universo Procedural — **EN CURSO (6/8)**
 
 Fase 3 validada físicamente por Miguel el 2026-08-30 (probó las 6 secciones de
 `.claude/VERIFICACION-PENDIENTE.md` a mano: `content_smoke_test`, naves/armas por
@@ -19,7 +19,7 @@ suficiente contenido curado insertado sobre lo procedural para que no se sienta
 vacío. El sistema fijo de Fase 1 pasa a ser un caso particular (semilla fija) del
 generador, no se descarta. Es la fase técnicamente más exigente después de Fase 0.
 
-### Progreso Fase 4 — 5/8
+### Progreso Fase 4 — 6/8
 
 - [x] P4-01 Algoritmo de generación de sistema estelar (semilla → estrella,
       planetas, órbitas) (dep. P1D-02)
@@ -32,7 +32,7 @@ generador, no se descarta. Es la fase técnicamente más exigente después de Fa
       perder contenido) (dep. P4-01)
 - [x] P4-05 Navegación entre sistemas (jump points o equivalente) + mapa de
       galaxia simplificado (dep. P4-01)
-- [ ] P4-06 Distribución procedural de recursos minables (asteroides/superficie)
+- [x] P4-06 Distribución procedural de recursos minables (asteroides/superficie)
       (dep. P4-02)
 - [ ] P4-07 Inserción de puntos de interés curados sobre el terreno procedural
       (estaciones, POIs a mano) (dep. P4-02, P3-04)
@@ -250,6 +250,36 @@ junte todo esto. Bug latente conocido de baja probabilidad: cargar en la ventana
    Verificado: build limpio (0 warnings) + `CSC_GALAXY_SMOKE: PASS` + 11 escenas
    headless + los 8 gates de smoke previos PASS + `validate_catalogs.py` OK +
    `--system=2` carga el nodo 2 generado.
+
+6. **P4-06 recursos minables procedurales:** módulo nuevo
+   `game/world/resources.{hpp,cpp}` — **extensión de la economía de P1C, no un
+   sistema paralelo:** minar = meter unidades de un commodity en el
+   `economy::CargoHold` de la nave (las mismas que comprarías, otra fuente).
+   `generate_asteroid_field(system_seed, commodity_count, out, out_pos, max)`:
+   determinista, 8–`kMaxDeposits=24` depósitos en un cinturón a 4–9 km de la
+   estrella; `commodity_id` sesgado (75% mineral / id 0, 25% uno raro),
+   `total` 80–400 u, `yield` 2.5–5 u/s. `spawn_asteroid_field` los instancia como
+   marcadores con `ResourceDeposit`. `mine_deposit(d, hold, table, dt)` puro:
+   transfiere unidades enteras (acumulador `carry` para sub-unidad), respeta
+   `remaining` y la capacidad de bodega (`cargo_add` todo-o-nada → prueba con
+   cantidad decreciente), marca `remaining=0` al agotarse. `update_mining(world,
+   dt)` (en `world::fixed_step`): cualquier `PlayerShip` **parada** (velocidad <
+   `kDepositMaxShipSpeed=12`) dentro de `kDepositMineRange=45` mina el depósito a
+   su bodega; los agotados ganan `DepositDepleted` (add diferido tras el
+   `world.each`, no mid-iteration). `universe_test` ahora llama
+   `load_economy_data` (para que la minería funcione en escena) y
+   `spawn_universe_test` recibe el `system_seed` para sembrar el cinturón.
+   Gate headless `CSC_RESOURCES_SMOKE=1`: campo determinista (`memcmp`),
+   commodity ids válidos, y `mine_deposit` **conserva unidades** (50 minadas = 50
+   en bodega, depósito a 0) y una bodega llena corta la minería sin perder el
+   depósito.
+   **Fuera de alcance, anotado:** minería por proximidad pasiva (sin láser, sin
+   apuntado, sin minijuego) — un pilar de minería propiamente dicho es contenido/
+   pulido posterior. Sin depósitos en superficie planetaria todavía (solo
+   cinturón de asteroides); la superficie se apoya en el terreno de P4-02/03 que
+   aún no se renderiza.
+   Verificado: build limpio (0 warnings) + `CSC_RESOURCES_SMOKE: PASS` + 11
+   escenas headless + los 9 gates de smoke previos PASS + `validate_catalogs.py` OK.
 
 ---
 
@@ -912,6 +942,18 @@ Cuando una entidad lleva `LocalToShip { ship_entity, local_position, local_orien
 5. Al salir (quitar `LocalToShip`), se bakea la pose mundial y la sim pasa a espacio mundo / GravityZone.
 
 ## Bitácora (más reciente arriba, una línea por tarea)
+- 2026-08-30 [P4-06] Recursos minables procedurales: `game/world/resources.{hpp,cpp}`
+  — extensión de la economía de P1C (minar = commodity a la `CargoHold`, no
+  sistema paralelo). `generate_asteroid_field(system_seed,...)` determinista
+  (8-24 depósitos en cinturón, commodity sesgado, total/yield por semilla).
+  `mine_deposit` puro conserva unidades y respeta bodega. `update_mining` en
+  `world::fixed_step`: nave parada dentro de rango mina el depósito; agotados →
+  `DepositDepleted`. `universe_test` carga `load_economy_data` + siembra el
+  cinturón con el `system_seed`. Gate `CSC_RESOURCES_SMOKE=1` PASS (determinismo
+  + conservación de unidades + bodega llena). Minería pasiva por proximidad (sin
+  láser/apuntado); sin depósitos de superficie aún. Verificado: build 0 warnings
+  + RESOURCES_SMOKE PASS + 11 escenas + 9 smokes previos PASS. **Sin verificación
+  manual** (headless; se aprecia volando a un asteroide con P4-08).
 - 2026-08-30 [P4-05] Navegación entre sistemas + mapa de galaxia:
   `game/world/galaxy.{hpp,cpp}` — `generate_galaxy(galaxy_seed, home_seed, out)`
   puro: 5-9 sistemas en un disco, nodo 0 = home (seed = `base_seed` de P4-04),

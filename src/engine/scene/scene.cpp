@@ -15,6 +15,7 @@
 #include "game/ui/ui.hpp"
 #include "game/world/galaxy.hpp"
 #include "game/world/planet_terrain.hpp"
+#include "game/world/resources.hpp"
 #include "game/world/star_system_gen.hpp"
 #include "game/world/terrain_stream.hpp"
 #include "game/world/world.hpp"
@@ -376,6 +377,10 @@ bool setup_universe_test(SceneContext& ctx)
     ecs::world_spawn_default_camera(*ctx.world, ctx.aspect);
     ecs::world_spawn_default_grid(*ctx.world);
 
+    // P4-06: mining pulls commodities into the ship's CargoHold — needs the
+    // economy tables + a wallet/cargo like the trade scenes.
+    (void)game::economy::load_economy_data(*ctx.world);
+
     if (std::getenv("CSC_SYSTEMGEN_SMOKE") != nullptr) {
         (void)game::world::star_system_gen_smoke_test();  // P4-01
     }
@@ -390,6 +395,9 @@ bool setup_universe_test(SceneContext& ctx)
     }
     if (std::getenv("CSC_GALAXY_SMOKE") != nullptr) {
         (void)game::world::galaxy_smoke_test();  // P4-05
+    }
+    if (std::getenv("CSC_RESOURCES_SMOKE") != nullptr) {
+        (void)game::world::resources_smoke_test();  // P4-06
     }
 
     // P4-05: the galaxy this system belongs to (node 0 = the composed home
@@ -409,27 +417,30 @@ bool setup_universe_test(SceneContext& ctx)
     ctx.world->set<game::world::GalaxyMap>(galaxy);
 
     game::world::StarSystemData system{};
+    csc::u64                    system_seed = game::world::kHomeSystemSeed;
     if (ctx.world_seed != nullptr) {
         // P4-01: procedural star system from --seed=<n>.
-        const auto seed = static_cast<csc::u64>(std::strtoull(ctx.world_seed, nullptr, 0));
-        const csc::u32 n = game::world::generate_star_system(seed, system);
+        system_seed      = static_cast<csc::u64>(std::strtoull(ctx.world_seed, nullptr, 0));
+        const csc::u32 n = game::world::generate_star_system(system_seed, system);
         log::log_info(
             log::LogCategory::Core,
             "universe_test: generated system '%s' from seed %llu (%u bodies)",
             system.system_name,
-            static_cast<unsigned long long>(seed),
+            static_cast<unsigned long long>(system_seed),
             n);
     } else if (node == 0) {
         (void)game::world::load_star_system_config(system, "assets/data/star_system.cfg");
     } else {
-        const csc::u32 n = game::world::generate_star_system(galaxy.systems[node].seed, system);
+        system_seed      = galaxy.systems[node].seed;
+        const csc::u32 n = game::world::generate_star_system(system_seed, system);
         log::log_info(
             log::LogCategory::Core,
             "universe_test: jumped to galaxy node %u '%s' (%u bodies)",
             node, system.system_name, n);
     }
 
-    (void)game::world::spawn_universe_test(*ctx.world, system, ctx.player_ship_id);
+    (void)game::world::spawn_universe_test(
+        *ctx.world, system, ctx.player_ship_id, system_seed);
 
     ctx.needs_shared_mesh = true;
     // Star + planets + LZ/stations + ship + streamed props + projectiles.
