@@ -28,6 +28,9 @@ struct AppConfig {
     /// (`--suit=<id>` / `suit_id=`). Empty = suit.flight.standard. A suit locker
     /// (P3-06) supersedes this in-scene.
     char player_suit_id[kConfigStringBytes]{};
+    /// P4-01: star-system seed for procedural scenes (`--seed=<n>` / `seed=`).
+    /// Empty = use the fixed assets/data/star_system.cfg (Fase 1D behaviour).
+    char world_seed[kConfigStringBytes]{};
     log::LogLevel log_level = log::LogLevel::Info;
     /// Undecorated window at primary monitor resolution — avoids WSLg/WM
     /// decoration quirks with a bordered resizable window.

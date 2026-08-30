@@ -1,6 +1,6 @@
 # STATUS
 
-## Fase activa: Fase 4 — Universo Procedural — **ABIERTA (0/8)**
+## Fase activa: Fase 4 — Universo Procedural — **EN CURSO (1/8)**
 
 Fase 3 validada físicamente por Miguel el 2026-08-30 (probó las 6 secciones de
 `.claude/VERIFICACION-PENDIENTE.md` a mano: `content_smoke_test`, naves/armas por
@@ -19,9 +19,9 @@ suficiente contenido curado insertado sobre lo procedural para que no se sienta
 vacío. El sistema fijo de Fase 1 pasa a ser un caso particular (semilla fija) del
 generador, no se descarta. Es la fase técnicamente más exigente después de Fase 0.
 
-### Progreso Fase 4 — 0/8
+### Progreso Fase 4 — 1/8
 
-- [ ] P4-01 Algoritmo de generación de sistema estelar (semilla → estrella,
+- [x] P4-01 Algoritmo de generación de sistema estelar (semilla → estrella,
       planetas, órbitas) (dep. P1D-02)
 - [ ] P4-02 Generación procedural de terreno planetario (heightmap por ruido,
       esférico) (dep. —)
@@ -80,6 +80,46 @@ Fase 4 introduce su propio formato de persistencia (semilla + deltas de terreno)
 así que es el momento natural de hacer **un único** bump de `schema_version` que
 junte todo esto. Bug latente conocido de baja probabilidad: cargar en la ventana
 "muerto, esperando respawn" deja `Health.hp=0` sin `CharacterDead`.
+
+### Decisiones Fase 4 (documentadas)
+
+1. **P4-01 generador de sistema estelar:** módulo nuevo
+   `game/world/star_system_gen.{hpp,cpp}` — función pura
+   `generate_star_system(u64 seed, StarSystemData& out, GeneratedSystemInfo* info)`
+   que **rellena la misma estructura `StarSystemData` de P1D-02** (arrays fijos,
+   `kMaxCelestialBodies=16`), sin FILE I/O, sin heap, sin globals. RNG:
+   **SplitMix64** (constantes fijas → misma secuencia de bits en cualquier
+   plataforma; `next_u64` también sirve para derivar sub-semillas por cuerpo).
+   Genera: estrella en el origen del sistema (índice 0, radio 60–150) +
+   `[kMinPlanets=2, kMaxPlanets=6]` planetas en **órbitas geométricas**
+   (`orbit *= [1.55, 2.10]` cada paso → radios estrictamente crecientes),
+   ángulo/inclinación por semilla, radio 110–340, `has_atmosphere` (~60%) y
+   `has_landing_zone` (~50%); cada planeta con LZ emite un cuerpo `LandingZone`
+   **inmediatamente después** en el array (posición al lado del planeta, cara
+   sunward). `GeneratedSystemInfo` expone en paralelo `body_seed` / `orbit_radius`
+   / `orbit_angle` / flags para que P4-02 (terreno) / P4-06 (recursos) /
+   P4-07 (POIs) reutilicen los mismos números sin re-derivar.
+   `generated_system_name(seed)` → `"Sys-XXXXXXXX"` (hex de los 32 bits bajos).
+   **Determinismo:** el mismo seed produce salida byte-idéntica en el mismo
+   binario (verificado con `memcmp` en el smoke). La bit-identidad
+   entre-plataformas de las posiciones depende de `cosf`/`sinf`/`sqrtf` de la
+   libm (±1 ULP posible entre libms distintas) — el RNG sí es bit-exacto; la DoD
+   pide "reproducible", no ULP-idéntico, así que se acepta y se anota.
+   Gancho de prueba: flag `--seed=<n>` (+ `seed=` en config) → `SceneContext.world_seed`
+   → `universe_test` genera el sistema en vez de `load_star_system_config` cuando
+   está puesto (por defecto sigue el `star_system.cfg` fijo, comportamiento de
+   Fase 1D intacto). Gate headless `CSC_SYSTEMGEN_SMOKE=1` (en `setup_universe_test`,
+   puro, sin world): 5 semillas → nº de cuerpos en rango, estrella en [0], órbitas
+   crecientes, LZ emparejada a su planeta, y re-generar el mismo seed es
+   byte-idéntico; semillas distintas no colisionan.
+   **Fuera de alcance, anotado:** los sistemas generados no tienen aún estaciones
+   ni POIs (los añaden P4-04 migración del fijo + P4-07 curados) — con `--seed=`
+   el jugador aparece junto a la estrella (no hay `Station` que ancle el spawn);
+   `spawn_universe_test` lo tolera sin crash. Sin órbitas animadas (cuerpos
+   colocados estáticos, igual que el sistema fijo hoy).
+   Verificado: build limpio (0 warnings) + `CSC_SYSTEMGEN_SMOKE: PASS` + 11 escenas
+   headless + los 5 gates de smoke previos PASS + `--seed=12345` reproducible
+   (`Sys-00003039`, 8 cuerpos) y distinto de `--seed=99` (`Sys-00000063`, 10).
 
 ---
 
@@ -742,6 +782,20 @@ Cuando una entidad lleva `LocalToShip { ship_entity, local_position, local_orien
 5. Al salir (quitar `LocalToShip`), se bakea la pose mundial y la sim pasa a espacio mundo / GravityZone.
 
 ## Bitácora (más reciente arriba, una línea por tarea)
+- 2026-08-30 [P4-01] Generador de sistema estelar: `game/world/star_system_gen.{hpp,cpp}`
+  — `generate_star_system(seed, StarSystemData&, GeneratedSystemInfo*)` pura, sin
+  heap, RNG SplitMix64 (bit-exacto entre plataformas). Estrella + 2-6 planetas en
+  órbitas geométricas crecientes + LZ ~50% emparejada a su planeta; rellena la
+  misma estructura de P1D-02. `GeneratedSystemInfo` expone body_seed/orbit/flags
+  para P4-02/06/07. Flag `--seed=<n>` → `universe_test` genera el sistema (por
+  defecto sigue el `star_system.cfg` fijo). Gate `CSC_SYSTEMGEN_SMOKE=1` (5
+  semillas: rango, estrella[0], órbitas crecientes, LZ emparejada, byte-idéntico
+  al regenerar). Sistemas generados aún sin estaciones/POIs (P4-04/P4-07);
+  determinismo byte-exacto en el mismo binario, ±1 ULP posible entre libms
+  distintas (anotado). Verificado: build 0 warnings + SYSTEMGEN_SMOKE PASS + 11
+  escenas + 5 smokes previos PASS. **Verificación manual pendiente de Miguel:**
+  `--scene=universe_test --seed=12345` vuela un sistema generado; repetir el mismo
+  seed da el mismo sistema, otro seed da otro.
 - 2026-08-30 [Fase 3 → Fase 4] Miguel valida físicamente las 6 secciones de
   `.claude/VERIFICACION-PENDIENTE.md` (content_smoke, `--ship=`, hangar +
   taquillas, `--suit=`, Outpost C + arco Ashfall, regresión Fases 1/2 — todo OK).

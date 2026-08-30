@@ -13,6 +13,7 @@
 #include "game/flight/weapon_catalog.hpp"
 #include "game/save/save.hpp"
 #include "game/ui/ui.hpp"
+#include "game/world/star_system_gen.hpp"
 #include "game/world/world.hpp"
 
 #include <cstdio>
@@ -372,14 +373,30 @@ bool setup_universe_test(SceneContext& ctx)
     ecs::world_spawn_default_camera(*ctx.world, ctx.aspect);
     ecs::world_spawn_default_grid(*ctx.world);
 
+    if (std::getenv("CSC_SYSTEMGEN_SMOKE") != nullptr) {
+        (void)game::world::star_system_gen_smoke_test();  // P4-01
+    }
+
     game::world::StarSystemData system{};
-    (void)game::world::load_star_system_config(system, "assets/data/star_system.cfg");
+    if (ctx.world_seed != nullptr) {
+        // P4-01: procedural star system from --seed=<n>.
+        const auto seed = static_cast<csc::u64>(std::strtoull(ctx.world_seed, nullptr, 0));
+        const csc::u32 n = game::world::generate_star_system(seed, system);
+        log::log_info(
+            log::LogCategory::Core,
+            "universe_test: generated system '%s' from seed %llu (%u bodies)",
+            system.system_name,
+            static_cast<unsigned long long>(seed),
+            n);
+    } else {
+        (void)game::world::load_star_system_config(system, "assets/data/star_system.cfg");
+    }
 
     (void)game::world::spawn_universe_test(*ctx.world, system, ctx.player_ship_id);
 
     ctx.needs_shared_mesh = true;
-    // Station + star + planet + ship + streamed props (when loaded) + projectiles.
-    ctx.instance_count = 16u + static_cast<u32>(game::flight::kProjectilePoolSize);
+    // Star + planets + LZ/stations + ship + streamed props + projectiles.
+    ctx.instance_count = 20u + static_cast<u32>(game::flight::kProjectilePoolSize);
     return true;
 }
 

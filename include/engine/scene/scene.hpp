@@ -25,6 +25,9 @@ struct SceneContext {
     /// P3-06: suit catalog id for the player character in on-foot scenes
     /// (from `--suit=` / config). nullptr / empty = the scene's own default.
     const char*     player_suit_id = nullptr;
+    /// P4-01: star-system seed for procedural scenes (from `--seed=` / config).
+    /// nullptr / empty = use the fixed star_system.cfg.
+    const char*     world_seed = nullptr;
 };
 
 using SceneSetupFn = bool (*)(SceneContext& ctx);
