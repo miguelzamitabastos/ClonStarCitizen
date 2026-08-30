@@ -202,6 +202,25 @@ else()
     target_compile_options(clon_star_citizen PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
+# --- Content catalog validation (P3-08) -----------------------------------
+# Standalone check over assets/data/*.cfg — a duplicate id or dangling weapon
+# reference in seconds, no compile needed. Run it directly with
+#   python3 tools/validate_catalogs.py
+# or, when python3 is on PATH, as a build target:
+#   cmake --build build --target validate_catalogs
+find_program(PYTHON3_EXECUTABLE NAMES python3 python)
+if(PYTHON3_EXECUTABLE)
+    add_custom_target(validate_catalogs
+        COMMAND ${PYTHON3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tools/validate_catalogs.py
+                --data ${CMAKE_CURRENT_SOURCE_DIR}/assets/data
+        COMMENT "Validating content catalogs (assets/data/*.cfg)"
+        VERBATIM
+    )
+else()
+    message(STATUS "  python3 not found — 'validate_catalogs' target unavailable")
+endif()
+
 message(STATUS "ClonStarCitizen ${PROJECT_VERSION} — C++${CMAKE_CXX_STANDARD}")
 message(STATUS "  Vulkan: ${Vulkan_VERSION}")
 message(STATUS "  Flecs:  v4.1.6 (FetchContent)")

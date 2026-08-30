@@ -127,5 +127,10 @@ callouts) sí aplican siempre, con o sin la app abierta.
   combat, flight, ui, world). Ver `docs/game-modules.md` para el mapa completo.
 - **Compilación:** `.claude/skills/fast_compile/SKILL.md` —
   `cmake --build build -j$(nproc)`, es el comando de verificación obligatorio.
+- **Contenido dirigido por datos (Fase 3+):** las naves, armas y demás catálogos
+  viven en `assets/data/*.cfg` (formato `[[sección]]` + `clave=valor`). Antes de
+  tocar un `.cfg` o compilar tras editarlo, corre
+  `python3 tools/validate_catalogs.py` (P3-08): comprueba ids únicos y referencias
+  cruzadas resolubles en segundos, sin build.
 - Documentación y mensajes de commit en español, siguiendo el estilo ya
   existente en `STATUS.md` y el historial de commits del repo.

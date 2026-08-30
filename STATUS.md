@@ -1,6 +1,6 @@
 # STATUS
 
-## Fase activa: Fase 3 — Expansión de Contenido — **EN CURSO (4/9)**
+## Fase activa: Fase 3 — Expansión de Contenido — **EN CURSO (5/9)**
 
 Fase 2 validada físicamente por Miguel el 2026-08-30 (probó las 5 escenas de
 `.claude/VERIFICACION-PENDIENTE.md` a mano; solo se ven cuadros porque aún no hay
@@ -18,14 +18,14 @@ es Fase 4). El riesgo explícito de la fase: que se hardcodee contenido en C++ p
 velocidad. Objetivo contrario: añadir una nave / un arma / una misión = editar un
 archivo de datos, nunca tocar el motor.
 
-### Progreso Fase 3 — 4/9
+### Progreso Fase 3 — 5/9
 
-- Pipeline de datos (P3-01, P3-05, P3-08):       [##] 2/3
+- Pipeline de datos (P3-01, P3-05, P3-08):       [###] 3/3
   - [x] P3-01 Pipeline de datos de nave: stats (masa, empuje, hardpoints, capacidad
         de carga) en archivos de configuración, no en código (dep. P1A-01, P0-05)
   - [x] P3-05 Catálogo de armas/equipamiento dirigido por datos, mismo patrón que
         P3-01 (dep. P1A-08, P1B-06)
-  - [ ] P3-08 Herramienta interna (CLI/script) para validar y/o generar entradas de
+  - [x] P3-08 Herramienta interna (CLI/script) para validar y/o generar entradas de
         catálogo antes de compilar (dep. P3-01, P3-05)
 - Catálogo y naves jugables (P3-02, P3-03):      [##] 2/2
   - [x] P3-02 Catálogo de 4-6 tipos de nave (caza, carguero, exploración,
@@ -195,6 +195,31 @@ naves) o se difiere a Fase 6 (pulido).
    Verificado: build limpio (0 warnings) + 10 escenas headless (`ship<->weapon
    references OK` en todas) + `CSC_SAVE_SMOKE`/`CSC_HANGAR_SMOKE` PASS + test
    negativo (`weapon_id_0` colgante inyectado → 2 `log_error`, sin crash).
+
+5. **P3-08 validador de catálogos:** `tools/validate_catalogs.py` — script Python 3
+   autónomo (solo stdlib), **sin build**, que recorre `assets/data/*.cfg` con un
+   parser del mismo formato `[[sección]] clave=valor` y corre las validaciones que
+   hará `content_smoke_test` (P3-09): ids únicos por catálogo; naves y armas
+   siguen la convención de id de texto (aviso); `weapon_id_N` de cada nave resuelve
+   en `weapons.cfg` (error); existen los ids que el motor spawnea por nombre
+   (`ship.player.default`, `ship.npc.skiff`, `weapon.fixed.repeater`,
+   `weapon.turret.repeater`); `weapon_mounts`/`turret_hardpoints` dentro de tope;
+   `inertia`/`subsystem_hp` con el nº de valores correcto; ids de commodity
+   contiguos desde 0; `stock_N`/`price_mod_N`/`rate_N` de mercado indexan un
+   commodity existente; misiones con `type` válido y `commodity_id`/`from_market`/
+   `to_market`/`requires_completed_id` resolubles, `faction_id`/`target_faction_id`
+   en `[0,4)`. Salida: resumen con nº de entradas por catálogo + líneas
+   `WARN`/`ERROR` + veredicto `OK`/`FAILED`; exit 0/1 (los avisos nunca fallan).
+   Los topes (`kMaxShipDefs`, `kMaxWeaponMounts`, …) están replicados arriba del
+   script con un comentario de "mantener en sync" con los headers.
+   Descubrimiento: `python3 tools/validate_catalogs.py` directamente, o
+   `cmake --build build --target validate_catalogs` (target `add_custom_target`
+   opcional, solo si `python3` está en el PATH — **no** es dependencia del build
+   normal). Verificado: pasa limpio sobre los catálogos actuales (4 armas / 6
+   naves / 3 commodities / 2 mercados / 6 misiones), y un test negativo con
+   5 fallos inyectados (id de nave duplicado, `weapon_id` colgante, arma default
+   ausente, misión→mercado inexistente, commodity id no contiguo) los detecta
+   todos con exit 1.
 
 ## Fase 2 — Profundidad de Sistemas — **COMPLETADA y validada** (13/13, validación física 2026-08-30)
 
@@ -509,6 +534,16 @@ Cuando una entidad lleva `LocalToShip { ship_entity, local_position, local_orien
 5. Al salir (quitar `LocalToShip`), se bakea la pose mundial y la sim pasa a espacio mundo / GravityZone.
 
 ## Bitácora (más reciente arriba, una línea por tarea)
+- 2026-08-30 [P3-08] Validador de catálogos: `tools/validate_catalogs.py` (Python 3,
+  solo stdlib, sin build). Recorre `assets/data/*.cfg` y corre las validaciones de
+  P3-09: ids únicos, `weapon_id_N` de nave resuelve en `weapons.cfg`, ids del motor
+  presentes, topes, `inertia`/`subsystem_hp` bien formados, commodity ids
+  contiguos, índices de mercado y referencias de misión resolubles. Resumen +
+  `WARN`/`ERROR` + exit 0/1. Target CMake opcional `validate_catalogs` (si hay
+  `python3`, no bloquea el build). Bloque "Pipeline de datos" de Fase 3 COMPLETO
+  (P3-01/05/08). Verificado: limpio sobre los catálogos actuales + test negativo
+  con 5 fallos inyectados detectados (exit 1). Sin verificación manual (herramienta
+  de dev, no toca el runtime).
 - 2026-08-30 [P3-05] Catálogo de armas: `assets/data/weapons.cfg` (`[[weapon]]`)
   → singleton `flight::WeaponCatalog`/`WeaponDef` (POD, `kMaxWeaponDefs=24`), mismo
   parser/validación que `ship_catalog` (id de texto único, dup/ausente = carga
