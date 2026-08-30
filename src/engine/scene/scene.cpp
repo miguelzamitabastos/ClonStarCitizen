@@ -384,6 +384,9 @@ bool setup_universe_test(SceneContext& ctx)
     if (std::getenv("CSC_TERRAINSTREAM_SMOKE") != nullptr) {
         (void)game::world::terrain_stream_smoke_test();   // P4-03
     }
+    if (std::getenv("CSC_FIXEDSYS_SMOKE") != nullptr) {
+        (void)game::world::fixed_system_smoke_test("assets/data/star_system.cfg");  // P4-04
+    }
 
     game::world::StarSystemData system{};
     if (ctx.world_seed != nullptr) {

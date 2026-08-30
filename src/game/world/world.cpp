@@ -5,6 +5,7 @@
 #include "game/ai/ai.hpp"
 #include "game/character/character.hpp"
 #include "game/flight/flight.hpp"
+#include "game/world/star_system_gen.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -485,8 +486,15 @@ bool load_star_system_config(StarSystemData& out, const char* path)
         return false;
     }
 
+    // `loaded` accumulates the curated (hand-authored) bodies. If the file
+    // carries a `base_seed`, those are merged onto a procedurally generated
+    // base after the loop (P4-04) — the fixed system becomes a particular seed
+    // of the P4-01 generator plus its curated overlay, nothing lost.
     StarSystemData loaded{};
     copy_fixed(loaded.system_name, sizeof(loaded.system_name), "Sistema-01");
+    bool has_base_seed    = false;
+    bool has_system_name  = false;
+    u64  base_seed        = 0;
 
     char line[512];
     int  line_no = 0;
@@ -506,6 +514,12 @@ bool load_star_system_config(StarSystemData& out, const char* path)
 
         if (std::strcmp(key, "system_name") == 0) {
             copy_fixed(loaded.system_name, sizeof(loaded.system_name), value);
+            has_system_name = true;
+            continue;
+        }
+        if (std::strcmp(key, "base_seed") == 0) {  // P4-04
+            base_seed     = std::strtoull(value, nullptr, 0);
+            has_base_seed = true;
             continue;
         }
         if (std::strcmp(key, "body.count") == 0) {
@@ -562,12 +576,62 @@ bool load_star_system_config(StarSystemData& out, const char* path)
 
     std::fclose(file);
 
-    if (loaded.body_count == 0) {
+    if (loaded.body_count == 0 && !has_base_seed) {
         log::log_warn(
             log::LogCategory::Config,
             "%s: no bodies — keeping placeholders",
             path);
         return false;
+    }
+
+    if (has_base_seed) {
+        // P4-04: procedural base + curated overlay. A curated body whose name
+        // matches a generated one replaces it; otherwise it is appended.
+        StarSystemData composed{};
+        const u32      gen_count = generate_star_system(base_seed, composed);
+        if (has_system_name) {
+            copy_fixed(composed.system_name, sizeof(composed.system_name), loaded.system_name);
+        }
+        u32 merged   = 0;
+        u32 appended = 0;
+        for (u32 c = 0; c < loaded.body_count; ++c) {
+            const CelestialBody& cb = loaded.bodies[c];
+            if (cb.name[0] == '\0') {
+                continue;
+            }
+            i32 hit = -1;
+            for (u32 g = 0; g < composed.body_count; ++g) {
+                // A system has one star: a curated Star replaces the generated
+                // one regardless of name. Everything else merges by name.
+                const bool star_match = cb.type == CelestialBodyType::Star
+                                        && composed.bodies[g].type == CelestialBodyType::Star;
+                if (star_match || std::strcmp(composed.bodies[g].name, cb.name) == 0) {
+                    hit = static_cast<i32>(g);
+                    break;
+                }
+            }
+            if (hit >= 0) {
+                composed.bodies[hit] = cb;
+                ++merged;
+            } else if (composed.body_count < kMaxCelestialBodies) {
+                composed.bodies[composed.body_count++] = cb;
+                ++appended;
+            } else {
+                log::log_warn(
+                    log::LogCategory::Config,
+                    "%s: system full (%u) — curated body '%s' dropped",
+                    path, kMaxCelestialBodies, cb.name);
+            }
+        }
+        out = composed;
+        log::log_info(
+            log::LogCategory::Config,
+            "Composed star system '%s' from seed %llu: %u generated + %u curated "
+            "(%u merged, %u appended) = %u bodies",
+            out.system_name,
+            static_cast<unsigned long long>(base_seed),
+            gen_count, merged + appended, merged, appended, out.body_count);
+        return true;
     }
 
     out = loaded;
@@ -578,6 +642,58 @@ bool load_star_system_config(StarSystemData& out, const char* path)
         out.body_count,
         path);
     return true;
+}
+
+bool fixed_system_smoke_test(const char* path)
+{
+    StarSystemData a{};
+    StarSystemData b{};
+    const bool     ok_a = load_star_system_config(a, path);
+    const bool     ok_b = load_star_system_config(b, path);
+
+    bool ok = ok_a && ok_b;
+
+    const auto has_body = [](const StarSystemData& s, const char* name) {
+        for (u32 i = 0; i < s.body_count; ++i) {
+            if (std::strcmp(s.bodies[i].name, name) == 0) {
+                return true;
+            }
+        }
+        return false;
+    };
+    const auto has_generated = [](const StarSystemData& s) {
+        for (u32 i = 0; i < s.body_count; ++i) {
+            if (std::strncmp(s.bodies[i].name, "Sys-", 4) == 0) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    for (const char* name : {"Estacion-Alfa", "Estacion-Beta", "Planeta-01", "Planeta-02"}) {
+        if (!has_body(a, name)) {
+            log::log_error(log::LogCategory::Config, "fixedsys: curated body '%s' missing", name);
+            ok = false;
+        }
+    }
+    if (!has_generated(a)) {
+        log::log_error(log::LogCategory::Config, "fixedsys: no generated body ('Sys-*') present");
+        ok = false;
+    }
+    if (a.body_count <= 7) {
+        log::log_error(
+            log::LogCategory::Config, "fixedsys: only %u bodies — base_seed not composing?",
+            a.body_count);
+        ok = false;
+    }
+    if (a.body_count != b.body_count
+        || std::memcmp(a.bodies, b.bodies, a.body_count * sizeof(CelestialBody)) != 0) {
+        log::log_error(log::LogCategory::Config, "fixedsys: composed system is not deterministic");
+        ok = false;
+    }
+
+    log::log_info(log::LogCategory::Config, "CSC_FIXEDSYS_SMOKE: %s", ok ? "PASS" : "FAIL");
+    return ok;
 }
 
 flecs::entity spawn_universe_test(

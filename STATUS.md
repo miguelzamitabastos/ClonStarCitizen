@@ -1,6 +1,6 @@
 # STATUS
 
-## Fase activa: Fase 4 — Universo Procedural — **EN CURSO (3/8)**
+## Fase activa: Fase 4 — Universo Procedural — **EN CURSO (4/8)**
 
 Fase 3 validada físicamente por Miguel el 2026-08-30 (probó las 6 secciones de
 `.claude/VERIFICACION-PENDIENTE.md` a mano: `content_smoke_test`, naves/armas por
@@ -19,7 +19,7 @@ suficiente contenido curado insertado sobre lo procedural para que no se sienta
 vacío. El sistema fijo de Fase 1 pasa a ser un caso particular (semilla fija) del
 generador, no se descarta. Es la fase técnicamente más exigente después de Fase 0.
 
-### Progreso Fase 4 — 3/8
+### Progreso Fase 4 — 4/8
 
 - [x] P4-01 Algoritmo de generación de sistema estelar (semilla → estrella,
       planetas, órbitas) (dep. P1D-02)
@@ -28,7 +28,7 @@ generador, no se descarta. Es la fase técnicamente más exigente después de Fa
 - [x] P4-03 Streaming de terreno por chunks con LOD (extiende el streaming de
       P1D-03) (dep. P4-02, P1D-03) — sistema de streaming completo; dibujar los
       chunks en pantalla es el trabajo de renderer de P4-08
-- [ ] P4-04 Migración del sistema fijo actual a semilla fija del generador (no
+- [x] P4-04 Migración del sistema fijo actual a semilla fija del generador (no
       perder contenido) (dep. P4-01)
 - [ ] P4-05 Navegación entre sistemas (jump points o equivalente) + mapa de
       galaxia simplificado (dep. P4-01)
@@ -202,6 +202,24 @@ junte todo esto. Bug latente conocido de baja probabilidad: cargar en la ventana
    Verificado: build limpio (0 warnings) + `CSC_TERRAINSTREAM_SMOKE: PASS` (x5) +
    11 escenas headless + los 7 gates de smoke previos PASS + `validate_catalogs.py`
    OK.
+
+4. **P4-04 sistema fijo = semilla + overlay curado:** `star_system.cfg` gana una
+   clave opcional `base_seed=<n>` (añadida: `20260830`). Con ella,
+   `load_star_system_config` genera primero la base procedural
+   (`generate_star_system`, P4-01 → estrella + planetas + LZs) y **luego
+   superpone los `body.N.*`** del archivo: un cuerpo curado cuyo `name` coincide
+   con uno generado lo reemplaza; si no, se añade (hasta `kMaxCelestialBodies`).
+   Caso especial: un `Star` curado reemplaza al generado sin importar el nombre
+   (un sistema = una estrella). Sin `base_seed` → comportamiento 100% a mano de
+   antes (retrocompatible). Resultado por defecto en `universe_test`: "Sistema-01"
+   = 5 generados + 7 curados (1 merge de estrella + 6 append) = 11 cuerpos, con
+   Estacion-Alfa/Beta navegables intactas → **nada de contenido perdido**.
+   `--seed=<n>` sigue dando un sistema 100% generado (sin overlay). Gate headless
+   `CSC_FIXEDSYS_SMOKE=1` (en `setup_universe_test`): el sistema compuesto tiene
+   los 4 nombres curados clave + un cuerpo `Sys-*` generado + >7 cuerpos, y dos
+   cargas son byte-idénticas.
+   Verificado: build limpio (0 warnings) + `CSC_FIXEDSYS_SMOKE: PASS` + 9 escenas
+   headless + `CSC_SAVE_SMOKE`/`CSC_FORCE_REBASE_SMOKE` OK.
 
 ---
 
@@ -864,6 +882,15 @@ Cuando una entidad lleva `LocalToShip { ship_entity, local_position, local_orien
 5. Al salir (quitar `LocalToShip`), se bakea la pose mundial y la sim pasa a espacio mundo / GravityZone.
 
 ## Bitácora (más reciente arriba, una línea por tarea)
+- 2026-08-30 [P4-04] Sistema fijo → semilla + overlay curado: `star_system.cfg`
+  gana `base_seed=20260830`; `load_star_system_config` genera la base procedural
+  (P4-01) y superpone los `body.N.*` (reemplaza por nombre, o añade; un `Star`
+  curado reemplaza al generado). Sin `base_seed` → 100% a mano (retrocompatible).
+  `universe_test` por defecto: 5 generados + 7 curados = 11 cuerpos, Estacion-Alfa/
+  Beta intactas. `--seed=<n>` sigue siendo 100% generado. Gate
+  `CSC_FIXEDSYS_SMOKE=1` PASS (nombres curados + un `Sys-*` + >7 cuerpos +
+  determinista). Verificado: build 0 warnings + 9 escenas + SAVE/REBASE smoke OK.
+  **Sin verificación manual** (headless; se aprecia con P4-08).
 - 2026-08-30 [P4-03] Streaming de terreno por chunks con LOD:
   `game/world/terrain_stream.{hpp,cpp}` — sistema completo. `select_terrain_lod`
   (quadtree cubo-esfera puro, raíces por distancia, subdivide hasta profundidad

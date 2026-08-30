@@ -116,6 +116,13 @@ void rebase_if_needed(flecs::world& world);
 /// Apply defaults / placeholders if config missing (Sistema-01 / Estacion-Alfa / …).
 void star_system_set_placeholders(StarSystemData& out);
 
+/// P4-04 headless check (scene gate CSC_FIXEDSYS_SMOKE=1): load star_system.cfg
+/// and assert it composed a procedural base (a body named "Sys-*") with the
+/// curated overlay (Estacion-Alfa/Beta, Planeta-01/02 all present), more bodies
+/// than the curated list alone, and that a second load is byte-identical. Logs
+/// `CSC_FIXEDSYS_SMOKE: PASS|FAIL`.
+[[nodiscard]] bool fixed_system_smoke_test(const char* path);
+
 /// Spawn universe_test content from StarSystemData (level load only).
 /// Returns player ship entity. Sets FloatingOrigin singleton + ControlMode ShipPilot.
 /// P3-02: `player_ship_id` (nullptr = ship.player.default) picks the ShipDef the
