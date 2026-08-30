@@ -19,6 +19,9 @@ struct SceneContext {
     bool            needs_shared_mesh = false;
     /// Instance count requested by the scene (0 = none).
     u32             instance_count = 0;
+    /// P3-02: ship catalog id for the player ship in flight-capable scenes
+    /// (from `--ship=` / config). nullptr / empty = the scene's own default.
+    const char*     player_ship_id = nullptr;
 };
 
 using SceneSetupFn = bool (*)(SceneContext& ctx);

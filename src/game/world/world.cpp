@@ -580,7 +580,8 @@ bool load_star_system_config(StarSystemData& out, const char* path)
     return true;
 }
 
-flecs::entity spawn_universe_test(flecs::world& world, const StarSystemData& data)
+flecs::entity spawn_universe_test(
+    flecs::world& world, const StarSystemData& data, const char* player_ship_id)
 {
     FloatingOrigin fo{};
     fo.threshold    = kFloatingOriginThreshold;
@@ -659,8 +660,8 @@ flecs::entity spawn_universe_test(flecs::world& world, const StarSystemData& dat
     // Player ship near station, facing -Z toward landing zone (open-space stretch).
     flight::spawn_projectile_pool(world);
     ai::spawn_encounter_pool(world); // P2-12: dormant until proximity activates them
-    flecs::entity ship =
-        flight::spawn_player_ship(world, station_pos + glm::vec3{0.f, 5.f, 25.f});
+    flecs::entity ship = flight::spawn_player_ship(
+        world, station_pos + glm::vec3{0.f, 5.f, 25.f}, player_ship_id);
 
     // Optional CI smoke: CSC_FORCE_REBASE_SMOKE=1 teleports past threshold so the
     // first fixed_step performs ≥1 rebase (logged + DebugUiStats.rebase_count).

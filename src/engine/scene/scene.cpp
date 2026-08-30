@@ -67,7 +67,8 @@ bool setup_flight_test(SceneContext& ctx)
 
     // Ship at (0,5,0); static asteroid ~50m ahead along -Z (ship forward).
     game::flight::spawn_projectile_pool(*ctx.world);
-    (void)game::flight::spawn_player_ship(*ctx.world, glm::vec3{0.f, 5.f, 0.f});
+    (void)game::flight::spawn_player_ship(
+        *ctx.world, glm::vec3{0.f, 5.f, 0.f}, ctx.player_ship_id);
     (void)game::flight::spawn_damage_target(*ctx.world, glm::vec3{0.f, 5.f, -50.f}, 5.f);
 
     ctx.world->set<ecs::ControlMode>({ecs::ControlModeKind::ShipPilot});
@@ -91,8 +92,8 @@ bool setup_on_foot_test(SceneContext& ctx)
     game::flight::spawn_projectile_pool(*ctx.world);
 
     // Moving ship — coasts while OnFoot so LocalToShip interior is visible.
-    flecs::entity ship =
-        game::flight::spawn_player_ship(*ctx.world, glm::vec3{0.f, 8.f, 0.f});
+    flecs::entity ship = game::flight::spawn_player_ship(
+        *ctx.world, glm::vec3{0.f, 8.f, 0.f}, ctx.player_ship_id);
     if (game::flight::RigidBody6DOF* rb = ship.try_get_mut<game::flight::RigidBody6DOF>()) {
         rb->linear_vel = glm::vec3{1.8f, 0.f, 0.f};
     }
@@ -207,8 +208,8 @@ bool setup_crew_turret_test(SceneContext& ctx)
     game::flight::spawn_projectile_pool(*ctx.world);
 
     // Player ship with full NPC crew: engineer + turret gunner (P2-01).
-    flecs::entity ship =
-        game::flight::spawn_player_ship(*ctx.world, glm::vec3{0.f, 5.f, 0.f});
+    flecs::entity ship = game::flight::spawn_player_ship(
+        *ctx.world, glm::vec3{0.f, 5.f, 0.f}, ctx.player_ship_id);
 
     flecs::entity turret = game::flight::spawn_turret(
         *ctx.world, ship.id(), glm::vec3{0.f, 1.8f, 0.f}, 0u, true, "PlayerTurret");
@@ -369,7 +370,7 @@ bool setup_universe_test(SceneContext& ctx)
     game::world::StarSystemData system{};
     (void)game::world::load_star_system_config(system, "assets/data/star_system.cfg");
 
-    (void)game::world::spawn_universe_test(*ctx.world, system);
+    (void)game::world::spawn_universe_test(*ctx.world, system, ctx.player_ship_id);
 
     ctx.needs_shared_mesh = true;
     // Station + star + planet + ship + streamed props (when loaded) + projectiles.
@@ -403,8 +404,8 @@ bool setup_ui_audio_test(SceneContext& ctx)
     (void)game::economy::load_economy_data(*ctx.world);
 
     game::flight::spawn_projectile_pool(*ctx.world);
-    flecs::entity ship =
-        game::flight::spawn_player_ship(*ctx.world, glm::vec3{0.f, 5.f, 0.f});
+    flecs::entity ship = game::flight::spawn_player_ship(
+        *ctx.world, glm::vec3{0.f, 5.f, 0.f}, ctx.player_ship_id);
     game::economy::attach_cargo_hold_if_missing(ship);
     (void)game::flight::spawn_damage_target(*ctx.world, glm::vec3{0.f, 5.f, -40.f}, 4.f);
 
@@ -492,8 +493,8 @@ bool setup_save_load_test(SceneContext& ctx)
     (void)game::economy::load_economy_data(*ctx.world);
 
     game::flight::spawn_projectile_pool(*ctx.world);
-    flecs::entity ship =
-        game::flight::spawn_player_ship(*ctx.world, glm::vec3{12.f, 8.f, -30.f});
+    flecs::entity ship = game::flight::spawn_player_ship(
+        *ctx.world, glm::vec3{12.f, 8.f, -30.f}, ctx.player_ship_id);
     game::economy::attach_cargo_hold_if_missing(ship);
 
     // Coasting in flight with modified hull / shield / power.

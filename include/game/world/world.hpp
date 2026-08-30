@@ -118,7 +118,10 @@ void star_system_set_placeholders(StarSystemData& out);
 
 /// Spawn universe_test content from StarSystemData (level load only).
 /// Returns player ship entity. Sets FloatingOrigin singleton + ControlMode ShipPilot.
-[[nodiscard]] flecs::entity spawn_universe_test(flecs::world& world, const StarSystemData& data);
+/// P3-02: `player_ship_id` (nullptr = ship.player.default) picks the ShipDef the
+/// player spawns with — plumbed from `--ship=` via SceneContext.
+[[nodiscard]] flecs::entity spawn_universe_test(
+    flecs::world& world, const StarSystemData& data, const char* player_ship_id = nullptr);
 
 /// Copy rebase_count from FloatingOrigin (0 if absent).
 void fill_world_telemetry(flecs::world& world, u32& rebase_count, bool& found);

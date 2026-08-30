@@ -20,6 +20,10 @@ struct AppConfig {
     f32 physics_fixed_hz  = 60.0f;
 
     char scene_name[kConfigStringBytes]{};
+    /// P3-02: ship catalog id the player spawns with in flight-capable demo
+    /// scenes (`--ship=<id>` / `ship_id=` in a config file). Empty = the scene's
+    /// own default (ship.player.default). The hangar (P3-03) supersedes this.
+    char player_ship_id[kConfigStringBytes]{};
     log::LogLevel log_level = log::LogLevel::Info;
     /// Undecorated window at primary monitor resolution — avoids WSLg/WM
     /// decoration quirks with a bordered resizable window.

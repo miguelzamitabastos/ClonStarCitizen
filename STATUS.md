@@ -1,6 +1,6 @@
 # STATUS
 
-## Fase activa: Fase 3 — Expansión de Contenido — **EN CURSO (1/9)**
+## Fase activa: Fase 3 — Expansión de Contenido — **EN CURSO (2/9)**
 
 Fase 2 validada físicamente por Miguel el 2026-08-30 (probó las 5 escenas de
 `.claude/VERIFICACION-PENDIENTE.md` a mano; solo se ven cuadros porque aún no hay
@@ -18,7 +18,7 @@ es Fase 4). El riesgo explícito de la fase: que se hardcodee contenido en C++ p
 velocidad. Objetivo contrario: añadir una nave / un arma / una misión = editar un
 archivo de datos, nunca tocar el motor.
 
-### Progreso Fase 3 — 1/9
+### Progreso Fase 3 — 2/9
 
 - Pipeline de datos (P3-01, P3-05, P3-08):       [#] 1/3
   - [x] P3-01 Pipeline de datos de nave: stats (masa, empuje, hardpoints, capacidad
@@ -27,8 +27,8 @@ archivo de datos, nunca tocar el motor.
         P3-01 (dep. P1A-08, P1B-06)
   - [ ] P3-08 Herramienta interna (CLI/script) para validar y/o generar entradas de
         catálogo antes de compilar (dep. P3-01, P3-05)
-- Catálogo y naves jugables (P3-02, P3-03):      [ ] 0/2
-  - [ ] P3-02 Catálogo de 4-6 tipos de nave (caza, carguero, exploración,
+- Catálogo y naves jugables (P3-02, P3-03):      [#] 1/2
+  - [x] P3-02 Catálogo de 4-6 tipos de nave (caza, carguero, exploración,
         multipropósito) usando P3-01 (dep. P3-01)
   - [ ] P3-03 Hangar y tienda de naves: comprar/vender/cambiar de nave activa,
         reutilizando las transacciones de P1C-03 tal cual (dep. P3-02, P1C-03)
@@ -116,6 +116,27 @@ naves) o se difiere a Fase 6 (pulido).
    (flight/on_foot/crew_turret/npc_combat/economy/universe/ui_audio) sin crash,
    `CSC_SAVE_SMOKE=1` PASS, y test negativo (id duplicado inyectado → `log_error`
    "duplicate ship id" + "catalog INVALID", sin crash).
+
+2. **P3-02 catálogo de naves distintas:** puro contenido sobre el pipeline de
+   P3-01 — 4 hulls jugables nuevas en `ships.cfg` además de la multipropósito
+   base (`ship.player.default`/Kestrel): `ship.fighter.wasp` (28 t, empuje/torque
+   altos, casco 650, bodega 12, 2 cañones), `ship.freighter.mule` (120 t, torque
+   90k, casco 1600, bodega 160/400, 2 hardpoints de torreta),
+   `ship.explorer.pathfinder` (52 t, planta 620/1800, escudo 750, sensores 300,
+   bodega 60), `ship.heavy.bulwark` (90 t, casco 1900, escudo 900, 3 hardpoints
+   de torreta). Cero código de gameplay nuevo. Para poder **probarlas antes de
+   que exista el hangar (P3-03)** se añadió un único gancho: flag `--ship=<id>`
+   (y clave `ship_id=`/`player_ship_id=` en config) → `AppConfig.player_ship_id`
+   → `SceneContext.player_ship_id` → `spawn_player_ship` en todas las escenas de
+   vuelo (`flight_test`, `on_foot_test`, `crew_turret_test`, `ui_audio_test`,
+   `save_load_test`, y `universe_test` vía nuevo parámetro de
+   `spawn_universe_test`). `economy_test` no lo cablea (su escena la monta
+   `setup_economy_test_scene`, fuera de alcance de esta tarea). id inválido en
+   `--ship=` → warning + nave por defecto (mismo fallback que P3-01), sin crash.
+   El hangar de P3-03 sustituye este flag por una elección en juego.
+   Verificado: build limpio + las 8 escenas headless sin errores + `--ship=` con
+   cada hull nueva (masa correcta en el log) + `--ship=id.inexistente` (fallback)
+   + `CSC_SAVE_SMOKE=1` PASS + `CSC_FORCE_REBASE_SMOKE=1` dispara.
 
 ## Fase 2 — Profundidad de Sistemas — **COMPLETADA y validada** (13/13, validación física 2026-08-30)
 
@@ -429,6 +450,17 @@ Cuando una entidad lleva `LocalToShip { ship_entity, local_position, local_orien
 5. Al salir (quitar `LocalToShip`), se bakea la pose mundial y la sim pasa a espacio mundo / GravityZone.
 
 ## Bitácora (más reciente arriba, una línea por tarea)
+- 2026-08-30 [P3-02] Catálogo de naves: 4 hulls jugables nuevas en `ships.cfg`
+  (`fighter.wasp` / `freighter.mule` / `explorer.pathfinder` / `heavy.bulwark`)
+  con masa/empuje/torque/casco/escudo/bodega/hardpoints perceptiblemente
+  distintos, sobre el pipeline P3-01 sin código de gameplay nuevo. Gancho de
+  prueba previo al hangar: flag `--ship=<id>` (+ `ship_id=` en config) →
+  `AppConfig`/`SceneContext.player_ship_id` → `spawn_player_ship` en todas las
+  escenas de vuelo (`spawn_universe_test` gana un parámetro). id inválido →
+  fallback a la nave por defecto con warning. Verificado: build limpio + 8
+  escenas headless + `--ship=` con cada hull (masa correcta) + fallback +
+  `CSC_SAVE_SMOKE`/`CSC_FORCE_REBASE_SMOKE`. **Verificación manual pendiente de
+  Miguel:** volar 2+ naves y notar la diferencia de manejo.
 - 2026-08-30 [P3-01] Pipeline de datos de nave: `assets/data/ships.cfg` (`[[ship]]`)
   → singleton `flight::ShipCatalog`/`ShipDef` (POD, `kMaxShipDefs=16`, sin heap),
   cargado en `scene_setup_by_name` antes del setup de escena. `spawn_player_ship`/

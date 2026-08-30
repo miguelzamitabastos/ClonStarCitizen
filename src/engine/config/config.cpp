@@ -128,6 +128,10 @@ bool apply_kv(AppConfig& out, const char* key, const char* value)
         copy_fixed(out.scene_name, sizeof(out.scene_name), value);
         return true;
     }
+    if (std::strcmp(key, "player_ship_id") == 0 || std::strcmp(key, "ship_id") == 0) {
+        copy_fixed(out.player_ship_id, sizeof(out.player_ship_id), value);
+        return true;
+    }
     if (std::strcmp(key, "log_level") == 0) {
         log::LogLevel level = out.log_level;
         if (parse_log_level(value, level)) {
@@ -225,6 +229,7 @@ void config_apply_argv(AppConfig& out, int argc, char** argv)
         }
 
         static constexpr const char kScenePrefix[] = "--scene=";
+        static constexpr const char kShipPrefix[] = "--ship=";
         static constexpr const char kConfigPrefix[] = "--config=";
         static constexpr const char kLogPrefix[] = "--log-level=";
 
@@ -234,6 +239,14 @@ void config_apply_argv(AppConfig& out, int argc, char** argv)
         }
         if (std::strcmp(arg, "--scene") == 0 && i + 1 < argc && argv[i + 1] != nullptr) {
             apply_kv(out, "scene_name", argv[++i]);
+            continue;
+        }
+        if (std::strncmp(arg, kShipPrefix, sizeof(kShipPrefix) - 1) == 0) {
+            apply_kv(out, "player_ship_id", arg + (sizeof(kShipPrefix) - 1));
+            continue;
+        }
+        if (std::strcmp(arg, "--ship") == 0 && i + 1 < argc && argv[i + 1] != nullptr) {
+            apply_kv(out, "player_ship_id", argv[++i]);
             continue;
         }
         if (std::strncmp(arg, kConfigPrefix, sizeof(kConfigPrefix) - 1) == 0) {
