@@ -15,6 +15,7 @@
 #include "game/ui/ui.hpp"
 #include "game/world/planet_terrain.hpp"
 #include "game/world/star_system_gen.hpp"
+#include "game/world/terrain_stream.hpp"
 #include "game/world/world.hpp"
 
 #include <cstdio>
@@ -379,6 +380,9 @@ bool setup_universe_test(SceneContext& ctx)
     }
     if (std::getenv("CSC_PLANETGEN_SMOKE") != nullptr) {
         (void)game::world::planet_terrain_smoke_test();   // P4-02
+    }
+    if (std::getenv("CSC_TERRAINSTREAM_SMOKE") != nullptr) {
+        (void)game::world::terrain_stream_smoke_test();   // P4-03
     }
 
     game::world::StarSystemData system{};

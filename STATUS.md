@@ -1,6 +1,6 @@
 # STATUS
 
-## Fase activa: Fase 4 — Universo Procedural — **EN CURSO (2/8)**
+## Fase activa: Fase 4 — Universo Procedural — **EN CURSO (3/8)**
 
 Fase 3 validada físicamente por Miguel el 2026-08-30 (probó las 6 secciones de
 `.claude/VERIFICACION-PENDIENTE.md` a mano: `content_smoke_test`, naves/armas por
@@ -19,14 +19,15 @@ suficiente contenido curado insertado sobre lo procedural para que no se sienta
 vacío. El sistema fijo de Fase 1 pasa a ser un caso particular (semilla fija) del
 generador, no se descarta. Es la fase técnicamente más exigente después de Fase 0.
 
-### Progreso Fase 4 — 2/8
+### Progreso Fase 4 — 3/8
 
 - [x] P4-01 Algoritmo de generación de sistema estelar (semilla → estrella,
       planetas, órbitas) (dep. P1D-02)
 - [x] P4-02 Generación procedural de terreno planetario (heightmap por ruido,
       esférico) (dep. —)
-- [ ] P4-03 Streaming de terreno por chunks con LOD (extiende el streaming de
-      P1D-03) (dep. P4-02, P1D-03)
+- [x] P4-03 Streaming de terreno por chunks con LOD (extiende el streaming de
+      P1D-03) (dep. P4-02, P1D-03) — sistema de streaming completo; dibujar los
+      chunks en pantalla es el trabajo de renderer de P4-08
 - [ ] P4-04 Migración del sistema fijo actual a semilla fija del generador (no
       perder contenido) (dep. P4-01)
 - [ ] P4-05 Navegación entre sistemas (jump points o equivalente) + mapa de
@@ -159,6 +160,48 @@ junte todo esto. Bug latente conocido de baja probabilidad: cargar en la ventana
    posiciones vía `cosf`/`sinf`/`sqrtf` de libm (±1 ULP entre libms distintas).
    Verificado: build limpio (0 warnings) + `CSC_PLANETGEN_SMOKE: PASS` + 11
    escenas headless + los 6 gates de smoke previos PASS + `validate_catalogs.py` OK.
+
+3. **P4-03 streaming de terreno por chunks con LOD:** módulo nuevo
+   `game/world/terrain_stream.{hpp,cpp}` — el **sistema de streaming completo**;
+   dibujar los chunks en pantalla necesita soporte multi-malla en el renderer de
+   Vulkan y se hace al ensamblar P4-08 (`upload_cb`/`retire_cb` son la costura).
+   - **`select_terrain_lod(params, center, player_pos, out, max, &depth)`** —
+     pura, determinista: quadtree cubo-esfera, 6 raíces ordenadas por distancia
+     (detalle cerca del jugador reclama el presupuesto primero), subdivide un
+     nodo mientras `dist < radio*3 / 2^depth`, hasta `kMaxLodDepth=6`; emite
+     hojas como `TerrainPatchSpec` (rect de cara + resolución fija
+     `kTerrainChunkQuads=24`; el "LOD" es el tamaño del rect). Cap
+     `kMaxDesiredSpecs=128`.
+   - **`memory::Pool<TerrainChunk, kMaxLoadedChunks=48>`** — nunca crece; los
+     buffers CPU (`verts[625]`/`indices[3456]`) viven **en el slot**, reservados
+     de antemano (~2 MB estático total). Si el conjunto deseado no cabe, los
+     parches más lejanos simplemente no consiguen slot (cobertura lejana más
+     gruesa) en vez de exceder capacidad — se procesan los deseados
+     nearest-first.
+   - **Hilo de fondo** (`worker_loop`, un `std::thread` persistente + cola de
+     índices bajo `mutex`/`condvar`): saca chunks `Queued`, `CAS Queued→Generating`,
+     corre `build_planet_patch` (P4-02) en los buffers del chunk, `→ CpuReady`.
+     El **hilo principal** (`terrain_streamer_update`, barato, por frame):
+     reselecciona LOD, marca `wants_retire` los chunks no deseados (los libera
+     cuando el worker ya no los toca), encola los nuevos (nunca pasa de
+     `kMaxLoadedChunks`), y drena `CpuReady → upload_cb → GpuReady`. Sincronía
+     por `state` atómico (acquire/release) + `wants_retire` atómico + "no liberar
+     un slot en `Generating`".
+   - Gate headless `CSC_TERRAINSTREAM_SMOKE=1` (en `setup_universe_test`): en una
+     aproximación al planeta el LOD se refina (profundidad y nº de chunks
+     crecientes), el pool nunca supera `kMaxLoadedChunks`, todo chunk residente
+     llega a `GpuReady` con malla no vacía, la selección de LOD es determinista
+     para una posición dada, y el shutdown hace `join` limpio. Pasa 5/5 en
+     repeticiones (sin flakiness observada; no verificado con ThreadSanitizer).
+   **Fuera de alcance, anotado:** (a) render de los chunks → P4-08 (necesita
+   `vulkan-pipeline-expert`: hoy el renderer solo dibuja una malla compartida
+   instanciada); (b) revisar el umbral de floating-origin a escala planetaria
+   (item del roadmap) — se hace con P4-08, cuando se vuela de verdad sobre la
+   superficie; (c) sin morphing/geomorph entre niveles de LOD (pop al cambiar
+   de chunk) — pulido de Fase 6.
+   Verificado: build limpio (0 warnings) + `CSC_TERRAINSTREAM_SMOKE: PASS` (x5) +
+   11 escenas headless + los 7 gates de smoke previos PASS + `validate_catalogs.py`
+   OK.
 
 ---
 
@@ -821,6 +864,20 @@ Cuando una entidad lleva `LocalToShip { ship_entity, local_position, local_orien
 5. Al salir (quitar `LocalToShip`), se bakea la pose mundial y la sim pasa a espacio mundo / GravityZone.
 
 ## Bitácora (más reciente arriba, una línea por tarea)
+- 2026-08-30 [P4-03] Streaming de terreno por chunks con LOD:
+  `game/world/terrain_stream.{hpp,cpp}` — sistema completo. `select_terrain_lod`
+  (quadtree cubo-esfera puro, raíces por distancia, subdivide hasta profundidad
+  6). `Pool<TerrainChunk, 48>` fijo con buffers CPU en el slot (~2 MB); los
+  parches lejanos se quedan sin slot antes de exceder capacidad. Hilo de fondo
+  persistente genera chunks con `build_planet_patch` (P4-02); el hilo principal
+  reselecciona LOD, encola/retira y drena `CpuReady → upload_cb → GpuReady`.
+  Sincronía por `state`+`wants_retire` atómicos. Gate `CSC_TERRAINSTREAM_SMOKE=1`
+  PASS (x5): LOD se refina en la aproximación, pool nunca desborda, todo residente
+  llega a `GpuReady`, selección determinista, shutdown con join limpio. **Render
+  de los chunks + revisión del umbral de floating-origin → P4-08** (necesita
+  soporte multi-malla en el renderer, dominio vulkan-pipeline-expert). Verificado:
+  build 0 warnings + TERRAINSTREAM_SMOKE PASS + 11 escenas + 7 smokes previos PASS.
+  **Sin verificación manual todavía** (P4-03 es headless; se ve con P4-08).
 - 2026-08-30 [P4-02] Terreno planetario procedural: `game/world/planet_terrain.{hpp,cpp}`
   — librería pura sin heap. Ruido Perlin 3D + fBm sin dependencias;
   `planet_terrain_params(body_seed,...)` deriva la forma del planeta (usa el
