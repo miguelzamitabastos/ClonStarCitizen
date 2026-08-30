@@ -11,10 +11,11 @@ origin, HUD/audio, guardado/carga persistente.
 ## Estado
 
 **Activo** — incorporado a la oficina de ClaudeWorkstation el 2026-08-29 (venía
-de "Pausado" en `PORTFOLIO.md`, retomado por Miguel). Fase activa: **Fase 2 —
-Profundidad de Sistemas**. Progreso detallado, bitácora y contratos técnicos
-vigentes en [STATUS.md](STATUS.md) — es la fuente de verdad del estado, se
-actualiza al cierre de cada tarea.
+de "Pausado" en `PORTFOLIO.md`, retomado por Miguel). Fase activa: **Fase 5 —
+Multijugador y Red** (Fases 2/3/4 cerradas y validadas físicamente por Miguel el
+2026-08-30). Progreso detallado, bitácora y contratos técnicos vigentes en
+[STATUS.md](STATUS.md) — es la fuente de verdad del estado, se actualiza al
+cierre de cada tarea.
 
 ## Fases del proyecto
 
@@ -28,10 +29,10 @@ Roadmap completo en `docs/roadmap/files/` (wikilinks + ruta real):
 - [[05-FASE-1D-UNIVERSO-FIJO-Y-MUNDO]] — completada
 - [[06-FASE-1E-UI-HUD-AUDIO]] — completada
 - [[07-FASE-1F-PERSISTENCIA-Y-GUARDADO]] — completada
-- [[08-FASE-2-PROFUNDIDAD-DE-SISTEMAS]] — **en curso** (ver progreso en STATUS.md)
-- [[09-FASE-3-EXPANSION-DE-CONTENIDO]] — pendiente
-- [[10-FASE-4-UNIVERSO-PROCEDURAL]] — pendiente
-- [[11-FASE-5-MULTIJUGADOR-Y-RED]] — pendiente
+- [[08-FASE-2-PROFUNDIDAD-DE-SISTEMAS]] — completada
+- [[09-FASE-3-EXPANSION-DE-CONTENIDO]] — completada
+- [[10-FASE-4-UNIVERSO-PROCEDURAL]] — completada
+- [[11-FASE-5-MULTIJUGADOR-Y-RED]] — **en curso** (ver progreso en STATUS.md)
 - [[12-FASE-6-PULIDO-HERRAMIENTAS-RELEASE]] — pendiente
 
 ## Roles de la oficina en este proyecto

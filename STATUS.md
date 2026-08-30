@@ -1,53 +1,115 @@
 # STATUS
 
-## Fase activa: Fase 4 — Universo Procedural — **8/8 IMPLEMENTADA, PARADA: validación física pendiente**
+## Fase activa: Fase 5 — Multijugador y Red — **ABIERTA (0/10)**
 
-P4-01..08 implementadas y verificadas headless: build limpio (0 warnings) + 11
-gates de smoke propios + 12 escenas sin error + `procedural_test` sube 6 chunks de
-terreno a GPU **sin errores de validación de Vulkan** (con capas) y sobrevive a un
-rebase de floating origin. **No se abre Fase 5 hasta el OK explícito de Miguel**
-tras probar `procedural_test` en su RTX 5060 Ti — el DoD de framerate
-("sin pausas perceptibles al moverse rápido sobre la superficie") solo se mide en
-hardware real; lavapipe por software no sirve. Mismo criterio que cerró Fases
-0/1/2/3. Checklist: `.claude/VERIFICACION-PENDIENTE.md`.
+Fase 4 validada físicamente por Miguel el 2026-08-30 (probó `procedural_test` en
+la RTX 5060 Ti: el planeta procedural se renderiza con terreno LOD coloreado por
+altura a ~158 FPS, sobrevive a un rebase de floating origin — DoD de framerate
+cumplido). Con eso se cierra formalmente Fase 4 (8/8) y se abre Fase 5 según
+[[11-FASE-5-MULTIJUGADOR-Y-RED]]
+(`docs/roadmap/files/11-FASE-5-MULTIJUGADOR-Y-RED.md`).
 
-Fase 3 validada físicamente por Miguel el 2026-08-30 (probó las 6 secciones de
-`.claude/VERIFICACION-PENDIENTE.md` a mano: `content_smoke_test`, naves/armas por
-datos con `--ship=`, hangar + taquillas de traje, protección/EVA con `--suit=`,
-localizaciones pobladas + arco "Ashfall Line", y regresión de Fases 1/2 — todo
-marcado OK). Con eso se cierra formalmente Fase 3 (9/9) y se abre Fase 4 según
-[[10-FASE-4-UNIVERSO-PROCEDURAL]]
-(`docs/roadmap/files/10-FASE-4-UNIVERSO-PROCEDURAL.md`).
+### Objetivo de Fase 5
 
-### Objetivo de Fase 4
+Arquitectura **cliente-servidor autoritativa**: el servidor es la única fuente de
+verdad del estado (posición, daño, economía, inventario); los clientes envían
+intención (input) y reciben snapshots del estado con interpolación. Alcance
+realista: sesiones multijugador **pequeñas** (varios jugadores en el mismo
+sistema/instancia), **no** server meshing a escala de cientos. La primera tarea
+(P5-01) es comprobar si la separación simulación/presentación de las Fases 1-4
+aguanta — si sí, esta fase es una extensión; si no, un refactor.
 
-Reemplazar la simplificación deliberada de Fase 1D (universo fijo, zonas de
-aterrizaje prefabricadas y finitas) por generación real: terreno planetario
-esférico procedural con streaming por LOD, más de un sistema estelar navegable, y
-suficiente contenido curado insertado sobre lo procedural para que no se sienta
-vacío. El sistema fijo de Fase 1 pasa a ser un caso particular (semilla fija) del
-generador, no se descarta. Es la fase técnicamente más exigente después de Fase 0.
+### Progreso Fase 5 — 0/10
 
-### Progreso Fase 4 — 8/8 (implementadas, pendientes de validación física)
+- [ ] P5-01 Auditoría: ¿qué sistemas violan la separación simulación/input?
+      Refactor de lo necesario (dep. todo lo anterior)
+- [ ] P5-02 Elección y documentación de arquitectura de red (protocolo, librería)
+      (dep. P5-01)
+- [ ] P5-03 Serialización de red (snapshots de estado, NO el formato de guardado
+      de P1F) (dep. P5-02)
+- [ ] P5-04 Loop de servidor autoritativo (mismo binario en modo servidor, o
+      proceso separado) (dep. P5-02)
+- [ ] P5-05 Replicación de entidades: qué se envía, a qué frecuencia,
+      interpolación en cliente (dep. P5-03, P5-04)
+- [ ] P5-06 Input del cliente → comandos al servidor; reconciliación (empezar
+      **sin** predicción) (dep. P5-04, P5-05)
+- [ ] P5-07 Migración de sistemas de Fase 1-4 a contexto multi-cliente (economía
+      compartida, instancias de misión) (dep. P5-01, P5-05)
+- [ ] P5-08 Conexión/autenticación básica (sesiones, sin infraestructura de
+      cuentas compleja) (dep. P5-04)
+- [ ] P5-09 Validación server-side de acciones críticas (daño, comercio, posición)
+      — anti-cheat mínimo (dep. P5-05, P5-07)
+- [ ] P5-10 Escena/test `multiplayer_test`: dos clientes locales contra un
+      servidor local (dep. P5-01..09)
 
-- [x] P4-01 Algoritmo de generación de sistema estelar (semilla → estrella,
-      planetas, órbitas) (dep. P1D-02)
-- [x] P4-02 Generación procedural de terreno planetario (heightmap por ruido,
-      esférico) (dep. —)
-- [x] P4-03 Streaming de terreno por chunks con LOD (extiende el streaming de
-      P1D-03) (dep. P4-02, P1D-03) — sistema de streaming completo; dibujar los
-      chunks en pantalla es el trabajo de renderer de P4-08
-- [x] P4-04 Migración del sistema fijo actual a semilla fija del generador (no
-      perder contenido) (dep. P4-01)
-- [x] P4-05 Navegación entre sistemas (jump points o equivalente) + mapa de
-      galaxia simplificado (dep. P4-01)
-- [x] P4-06 Distribución procedural de recursos minables (asteroides/superficie)
-      (dep. P4-02)
-- [x] P4-07 Inserción de puntos de interés curados sobre el terreno procedural
-      (estaciones, POIs a mano) (dep. P4-02, P3-04)
-- [x] P4-08 Escena demo `procedural_test`: viaje entre dos sistemas generados +
-      aterrizaje en terreno real (dep. P4-01..07) — implementada; **falta la
-      validación física de Miguel** (framerate en su RTX).
+### Restricciones de arquitectura de Fase 5 (del roadmap, vinculantes)
+
+1. **El servidor es la única fuente de verdad.** Ningún cliente decide si un
+   disparo hace daño, si una transacción es válida, o dónde está una nave: el
+   cliente envía intención (`"disparar"`, `"comprar X"`, `"empuje=(1,0,0)"`) y el
+   servidor aplica **la lógica ya existente de Fase 1-4** (misma física, daño,
+   economía — sin duplicarla) y difunde el resultado. Si P5-01 encuentra un
+   sistema que calcula en el cliente y solo "informa" al servidor, se invierte
+   esa relación.
+2. **El servidor corre su propio bucle a paso fijo** (reutiliza el scheduler de
+   P0-04) con las mismas reglas de **cero-alocación-en-el-loop** que el cliente
+   (un servidor con varios jugadores es MÁS sensible a hitches de allocs, no
+   menos).
+3. **La replicación (P5-05) no envía el ECS completo cada tick:** define qué
+   componentes son "replicables" (posición, orientación, HP, subsistemas) y a qué
+   frecuencia, con delta-compression básica desde el principio si la librería de
+   P5-02 lo facilita.
+4. **P5-06 empieza SIN client-side prediction** — interpolación entre snapshots
+   del servidor (más simple, más fácil de depurar sin supervisión constante).
+   Predicción de movimiento del jugador local solo si la latencia real lo
+   justifica, y se **documenta la decisión** aquí en vez de implementarla
+   especulativamente.
+5. **P5-07** decide qué es "compartido" (economía del sistema, estado del mundo)
+   y qué es "por instancia de misión" (una misión de combate puede tener su
+   instancia aislada). Decisión técnica de instancing: se toma y documenta, no se
+   bloquea (salvo que afecte a identidad/branding).
+6. **P5-09** NO es un anti-cheat sofisticado: el objetivo mínimo es que el
+   servidor **nunca confíe en un valor que el cliente podría falsificar**
+   (posición absoluta, dinero, daño infligido) sin validarlo contra su propia
+   simulación.
+7. Sigue vigente `.cursorrules`: DOD/ECS estricto, cero heap en Update/Render,
+   pools/arenas pre-asignados, GLM vía `include/engine/math/glm.hpp`.
+
+### Definition of Done de Fase 5 (del roadmap)
+
+- `multiplayer_test`: dos clientes locales al mismo servidor, se ven moverse con
+  interpolación fluida, y una acción de un cliente (disparo, transacción) se
+  refleja correctamente en el otro **vía el servidor**.
+- Modificar a mano un valor en un cliente de prueba (forzar posición/dinero) no
+  tiene efecto en el estado real — el servidor lo rechaza (demuestra autoridad).
+- `STATUS.md` documenta la arquitectura de red elegida (protocolo, librería,
+  frecuencia de tick de red) — referencia para las optimizaciones de Fase 6.
+
+### Deuda de schema del save arrastrada desde Fase 3/4 (pendiente)
+
+`ShipSpec` (P3-01), `ShipOwnership` (P3-03), `Suit` (P3-06), `GalaxyMap`/nodo
+actual (P4-05) y los componentes de Fase 2 no se serializan en el save v1. Fase 4
+tampoco añadió su formato semilla+deltas de terreno (no hizo falta — el terreno
+se regenera). Sigue pendiente **un único** bump de `schema_version` que junte
+todo; se decidirá al tocar la serialización de red (P5-03) o en Fase 6.
+
+---
+
+## Fase 4 — Universo Procedural — **COMPLETADA y validada** (8/8, validación física 2026-08-30)
+
+Módulos nuevos en `game/world/`: `star_system_gen` (semilla → `StarSystemData`,
+SplitMix64), `planet_terrain` (Perlin 3D + fBm → heightmap sobre cubo-esfera +
+`build_planet_patch`), `terrain_stream` (`Pool<TerrainChunk,48>` + quadtree LOD +
+hilo de fondo), `galaxy` (grafo de sistemas + jump graph), `resources` (asteroides
+minables → `CargoHold`), `poi_catalog` (`pois.cfg` — estaciones/POIs curados).
+`star_system.cfg` gana `base_seed` (sistema fijo = semilla + overlay curado).
+Renderer de Vulkan gana vía multi-malla de terreno (`terrain_chunks[64]` +
+`renderer_upload/retire_terrain_chunk` + `renderer_set_terrain_model`). Escena
+`procedural_test` (galaxia + sistema generado + terreno LOD streameado) + flags
+`--seed=` / `--system=`. 8 gates de smoke propios (`SYSTEMGEN`/`PLANETGEN`/
+`TERRAINSTREAM`/`FIXEDSYS`/`GALAXY`/`RESOURCES`/`POI` + el ensamblaje de P4-08).
+Umbral de floating origin (2 km) revisado y mantenido. Decisiones completas 1-8
+abajo.
 
 ### Restricciones de arquitectura de Fase 4 (del roadmap, vinculantes)
 
@@ -82,9 +144,14 @@ generador, no se descarta. Es la fase técnicamente más exigente después de Fa
 - El streaming de terreno mantiene el framerate objetivo de Fase 0 sin pausas
   perceptibles al moverse rápido sobre la superficie (overlay de P0-11).
 
-### P4-08 (`procedural_test`) — implementada; pendiente validación física
+### P4-08 (`procedural_test`) — implementada y validada físicamente (2026-08-30)
 
-**Hecho (verificado headless):**
+Miguel lo probó en la RTX 5060 Ti: el planeta procedural se renderiza con terreno
+LOD coloreado por altura (agua/roca/hierba) a **~158 FPS**, sobrevive a un rebase
+de floating origin (`rebases: 1` en el overlay, terreno intacto). DoD de framerate
+cumplido.
+
+**Implementación (también verificada headless):**
 
 1. **Renderer Vulkan — dibujar N mallas de terreno.** `RendererState` gana
    `GpuMesh terrain_chunks[kMaxTerrainDrawChunks=64]` + un buffer host-mapped de
@@ -1052,6 +1119,14 @@ Cuando una entidad lleva `LocalToShip { ship_entity, local_position, local_orien
 5. Al salir (quitar `LocalToShip`), se bakea la pose mundial y la sim pasa a espacio mundo / GravityZone.
 
 ## Bitácora (más reciente arriba, una línea por tarea)
+- 2026-08-30 [Fase 4 → Fase 5] Miguel valida físicamente `procedural_test` en la
+  RTX 5060 Ti: planeta procedural con terreno LOD coloreado por altura a ~158 FPS,
+  sobrevive a un rebase de floating origin. **Fase 4 CERRADA formalmente (8/8).**
+  Abierta Fase 5 — Multijugador y Red: 10 tareas (P5-01..10), eje = arquitectura
+  cliente-servidor autoritativa, sesiones pequeñas, sin server meshing. P5-01
+  audita si la separación simulación/presentación de Fases 1-4 aguanta. Objetivo,
+  restricciones y DoD arriba en "Fase activa". Checklist consumido —
+  `.claude/VERIFICACION-PENDIENTE.md` eliminado.
 - 2026-08-30 [P4-08 → Fase 4 8/8] `procedural_test`: vía de render multi-malla de
   terreno en Vulkan (`terrain_chunks[64]` + `terrain_model_buffer` + upload/retire/
   set_model + drawIndexed por chunk, **0 errores de validación**); `SceneContext`
